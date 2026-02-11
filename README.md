@@ -19,6 +19,10 @@ This repository implements an end-to-end cooperative autonomy loop:
 7. TF connector keeps the cross-platform frame tree coherent (`world`, `map`, drone and robot frames).
 8. Bag recording and post-processing scripts support experiments and dataset generation.
 
+## Project Idea Diagram
+
+![UAV-UGV Project Idea](docs/project_idea.png)
+
 ## Architecture Diagram
 
 ![UAV-UGV Functional Architecture](docs/architecture.svg)
@@ -33,6 +37,7 @@ This repository implements an end-to-end cooperative autonomy loop:
 - `models/`: Gazebo model assets
 - `config/`: controller YAML and YOLO weights (`best.pt`)
 - `scripts/`: runtime nodes and data tooling
+- `docs/project_idea.png`: concept figure of the UAV-UGV interception pipeline
 - `docs/architecture.svg`: high-level functional architecture image
 - `Dockerfile`, `docker-compose.yml`, `entrypoint.sh`: containerized PX4 + ROS 2 environment
 
