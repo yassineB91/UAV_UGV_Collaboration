@@ -2,7 +2,7 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import LaserScan
 from nav_msgs.msg import Odometry, OccupancyGrid
-from geometry_msgs.msg import PoseStamped, TransformStamped
+from geometry_msgs.msg import TransformStamped, PoseWithCovarianceStamped  
 import numpy as np
 from scipy.spatial import KDTree
 from math import cos, sin, atan2, sqrt
@@ -25,7 +25,7 @@ class ICPNode(Node):
         self.map_sub = self.create_subscription(OccupancyGrid,'/map',self.map_callback, 10)
 
         ### Publishers ###
-        self.pose_pub = self.create_publisher(PoseStamped,'/ugv/icp/pose', 10)
+        self.pose_pub = self.create_publisher(PoseWithCovarianceStamped,'/ugv/icp/pose', 10)
         self.transform_pub = self.create_publisher(TransformStamped,'/ugv/icp/transform',10)
 
     def odom_callback(self, odom_msg: Odometry):
@@ -158,8 +158,88 @@ class ICPNode(Node):
         mean_error = np.mean(distances[valid_mask])
         return R_total, t_total, mean_error, self.max_iter
     
+    def normalize_angle(self, theta):
+        """
+        Normalise l'angle dans [-pi, pi]
+        """
+        return atan2(sin(theta), cos(theta))
+    
+    def publish_pose(self, timestamp, error, num_matches):
+        """
+        Publie la pose ICP avec covariance
+        
+        Args:
+            timestamp: temps du scan
+            error: erreur ICP moyenne
+            num_matches: nombre de correspondances valides
+        """
+        msg = PoseWithCovarianceStamped()
+        msg.header.stamp = timestamp
+        msg.header.frame_id = 'map'
+        
+        # === POSE ===
+        msg.pose.pose.position.x = self.icp_pose[0]
+        msg.pose.pose.position.y = self.icp_pose[1]
+        msg.pose.pose.position.z = 0.0
+        
+        theta = self.icp_pose[2]
+        msg.pose.pose.orientation.x = 0.0
+        msg.pose.pose.orientation.y = 0.0
+        msg.pose.pose.orientation.z = sin(theta / 2.0)
+        msg.pose.pose.orientation.w = cos(theta / 2.0)
+        
+        # === COVARIANCE ===
+        # Calculer la covariance basée sur l'erreur ICP
+        # Plus l'erreur est grande, moins on est confiant
+        
+        # Covariance position (x, y)
+        sigma_xy = max(0.01, error)  # Minimum 1cm, sinon basé sur l'erreur
+        
+        # Covariance orientation
+        # Si peu de matches → moins confiant
+        sigma_theta = max(0.01, 0.1 / sqrt(num_matches))
+        
+        # Matrice 6x6 pour [x, y, z, roll, pitch, yaw]
+        # On ne remplit que x, y, yaw (indices 0, 1, 5)
+        covariance = [0.0] * 36  # Matrice 6x6 aplatie
+        
+        covariance[0] = sigma_xy ** 2   # Variance X
+        covariance[7] = sigma_xy ** 2   # Variance Y
+        covariance[35] = sigma_theta ** 2  # Variance Yaw
+        
+        msg.pose.covariance = covariance
+        
+        self.pose_pub.publish(msg)
+
+
+    def publish_transform(self, R, t, timestamp):
+
+        msg = TransformStamped()
+
+        msg.header.stamp = timestamp
+        msg.header.frame_id = 'icp_base'
+        msg.child_frame_id = 'icp_corrected'
+
+        # Translation
+        msg.transform.translation.x = float(t[0])
+        msg.transform.translation.y = float(t[1])
+        msg.transform.translation.z = 0.0
+
+        # Rotation (matrice 2D -> quaternion)
+        theta = atan2(R[1, 0], R[0, 0])
+        msg.transform.rotation.x = 0.0
+        msg.transform.rotation.y = 0.0
+        msg.transform.rotation.z = sin(theta / 2.0)
+        msg.transform.rotation.w = cos(theta / 2.0)
+
+        self.transform_pub.publish(msg)
+
+
+    
     
     def scan_callback(self, scan_msg: LaserScan):
+
+        msg = PoseWithCovarianceStamped()
         
         if self.map_points is None:
             self.get_logger().warn('Map not received yet, skipping ICP', throttle_duration_sec=5.0)
@@ -180,3 +260,43 @@ class ICPNode(Node):
         scan_points_global = (R_pred @ scan_points.T).T + np.array([x_pred, y_pred])
 
         R, t, error, iterations = self.icp(scan_points_global,self.map_points)
+
+        # === CALCULER NOMBRE DE CORRESPONDANCES VALIDES ===
+        tree = KDTree(self.map_points)
+        distances, _ = tree.query(scan_points_global)
+        num_matches = np.sum(distances < self.max_dist)
+
+        theta_correction = atan2(R[1, 0], R[0, 0])
+
+        self.icp_pose[0] = x_pred + t[0]
+        self.icp_pose[1] = y_pred + t[1]
+        self.icp_pose[2] = atan2(self.normalize_angle(theta_correction + theta_pred)) 
+
+        self.publish_pose(msg.header.stamp, error, num_matches)
+        self.publish_transform(R, t, msg.header.stamp)
+
+        odom_to_icp_error = np.linalg.norm([t[0], t[1]])
+        
+        self.get_logger().info(
+            f'ICP: err={error:.4f}m, iter={iterations}, '
+            f'odom→icp correction={odom_to_icp_error:.3f}m, '
+            f'pose=({self.icp_pose[0]:.2f}, {self.icp_pose[1]:.2f}, '
+            f'{np.degrees(self.icp_pose[2]):.1f}°)'
+        )
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = ICPNode()
+    
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
