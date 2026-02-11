@@ -1,0 +1,80 @@
+version: "3.8"
+
+services:
+  px4_ros2_unified:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: px4_ros2
+    network_mode: host
+    privileged: true
+
+    environment:
+      # WSLg / GUI
+      - DISPLAY=:0
+      - WAYLAND_DISPLAY=wayland-0
+      - XDG_RUNTIME_DIR=/mnt/wslg/runtime-dir
+      - PULSE_SERVER=/mnt/wslg/PulseServer
+
+      # ROS 2 / DDS
+      - ROS_DOMAIN_ID=42
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - ROS_LOCALHOST_ONLY=0
+
+      # Gazebo
+      - GAZEBO_MASTER_URI=http://127.0.0.1:11345
+      - GAZEBO_IP=127.0.0.1
+
+      # OpenGL / WSLg
+      - LIBGL_ALWAYS_INDIRECT=0
+      - QT_X11_NO_MITSHM=1
+
+      # Default: headless (évite gzclient crash WSLg)
+      - HEADLESS=1
+
+      # MicroXRCEAgent
+      - XRCE_TRANSPORT=udp
+      - XRCE_UDP_PORT=8888
+      # Si tu veux TCP à la place:
+      # - XRCE_TRANSPORT=tcp
+      # - XRCE_TCP_PORT=8888
+
+      # Optionnel : lancer PX4 + Gazebo automatiquement
+      - AUTOSTART_PX4=0
+
+      # Optionnel : lancer un ros2 launch automatiquement
+      - AUTOSTART_ROS2=0
+      - ROS2_LAUNCH_PKG=my_package
+      - ROS2_LAUNCH_FILE=bringup.launch.py
+
+    volumes:
+      # Ton code/ressources ROS2
+      - ./urdf:/root/dev_ws/src/my_package/urdf
+      - ./launch:/root/dev_ws/src/my_package/launch
+      - ./worlds:/root/dev_ws/src/my_package/worlds
+      - ./config:/root/dev_ws/src/my_package/config
+      - ./models:/root/dev_ws/src/my_package/models
+      - ./scripts:/root/dev_ws/src/my_package/scripts
+      - ./CMakeLists.txt:/root/dev_ws/src/my_package/CMakeLists.txt
+
+      # Entrypoint (read-only OK)
+      - ./entrypoint.sh:/entrypoint.sh:ro
+
+      # X11 / WSLg
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /mnt/wslg:/mnt/wslg:rw
+      - /usr/lib/wsl:/usr/lib/wsl:ro
+      - /run/user/1000:/run/user/1000:rw
+
+      # GPU (DRI)
+      - /dev/dri:/dev/dri
+
+    devices:
+      - /dev/dri:/dev/dri
+
+    tty: true
+    stdin_open: true
+
+    # On force un bash -c pour garantir exécution même si permissions / line-endings posent souci
+    entrypoint: ["/bin/bash", "-c"]
+    command: ["/entrypoint.sh bash"]
