@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-label="UAV UGV collaboration architecture">
+  <defs>
+    <style>
+      .title { font: 700 28px 'DejaVu Sans', Arial, sans-serif; fill: #0f172a; }
+      .subtitle { font: 500 16px 'DejaVu Sans', Arial, sans-serif; fill: #334155; }
+      .section { font: 700 18px 'DejaVu Sans', Arial, sans-serif; fill: #0f172a; }
+      .label { font: 500 14px 'DejaVu Sans', Arial, sans-serif; fill: #0f172a; }
+      .small { font: 500 12px 'DejaVu Sans', Arial, sans-serif; fill: #334155; }
+      .box { stroke: #1e293b; stroke-width: 2; rx: 12; ry: 12; }
+      .arrow { stroke: #0f172a; stroke-width: 2.4; fill: none; marker-end: url(#arrowhead); }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#0f172a" />
+    </marker>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#eef2ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="760" fill="url(#bg)"/>
+
+  <text x="40" y="52" class="title">UAV-UGV Collaboration Functional Architecture</text>
+  <text x="40" y="78" class="subtitle">ROS 2 Humble + PX4 SITL + Gazebo Classic data flow</text>
+
+  <text x="60" y="130" class="section">Simulation Layer</text>
+  <rect class="box" x="40" y="150" width="360" height="120" fill="#dbeafe"/>
+  <text x="60" y="185" class="label">PX4 SITL + MAVROS + UAV Camera/IMU/Pose</text>
+  <text x="60" y="210" class="small">/mavros/*, /iris_depth_camera/*</text>
+
+  <rect class="box" x="40" y="300" width="360" height="120" fill="#dcfce7"/>
+  <text x="60" y="335" class="label">Gazebo UGV (robot1/robot2)</text>
+  <text x="60" y="360" class="small">/scan, /camera/image_raw, /robot1/diff_cont/odom</text>
+
+  <text x="470" y="130" class="section">Perception &amp; Fusion Layer</text>
+  <rect class="box" x="440" y="150" width="390" height="90" fill="#fef3c7"/>
+  <text x="460" y="182" class="label">uav_sensor_bridge.py</text>
+  <text x="460" y="205" class="small">Normalizes UAV topics to /uav/*</text>
+
+  <rect class="box" x="440" y="260" width="390" height="90" fill="#fde68a"/>
+  <text x="460" y="292" class="label">uav_yolo_tracker.py</text>
+  <text x="460" y="315" class="small">YOLO tracking -> /uav/detection_boxes</text>
+
+  <rect class="box" x="440" y="370" width="390" height="120" fill="#fef9c3"/>
+  <text x="460" y="402" class="label">uav_projection.py</text>
+  <text x="460" y="425" class="small">Image + IMU + Altitude + Detections -> /map</text>
+  <text x="460" y="447" class="small">Publishes /uav/obstacle_mask and /uav/target_goal</text>
+
+  <rect class="box" x="440" y="520" width="390" height="90" fill="#ecfccb"/>
+  <text x="460" y="552" class="label">ugv_sensor_bridge.py</text>
+  <text x="460" y="575" class="small">Bridges UGV sensor streams to /ugv/*</text>
+
+  <text x="900" y="130" class="section">Localization &amp; Planning Layer</text>
+  <rect class="box" x="860" y="180" width="360" height="110" fill="#e0e7ff"/>
+  <text x="880" y="215" class="label">ugv_icp.py</text>
+  <text x="880" y="238" class="small">Aligns UGV LiDAR scans with /map (ICP)</text>
+
+  <rect class="box" x="860" y="320" width="360" height="110" fill="#ddd6fe"/>
+  <text x="880" y="355" class="label">dijkstra_planner.py</text>
+  <text x="880" y="378" class="small">Computes shortest path on occupancy grid</text>
+
+  <rect class="box" x="860" y="460" width="360" height="110" fill="#e9d5ff"/>
+  <text x="880" y="495" class="label">connect_tf_tree.py</text>
+  <text x="880" y="518" class="small">Publishes static/dynamic TF links</text>
+
+  <text x="900" y="640" class="section">Data Ops</text>
+  <rect class="box" x="860" y="660" width="360" height="70" fill="#fecaca"/>
+  <text x="880" y="690" class="small">record_bag.sh -> postprocess_run.sh -> make_dataset.py</text>
+
+  <path class="arrow" d="M 400 210 L 440 195"/>
+  <path class="arrow" d="M 400 360 L 440 555"/>
+  <path class="arrow" d="M 635 240 L 635 260"/>
+  <path class="arrow" d="M 635 350 L 635 370"/>
+  <path class="arrow" d="M 830 430 L 860 235"/>
+  <path class="arrow" d="M 830 430 L 860 375"/>
+  <path class="arrow" d="M 830 430 L 860 515"/>
+
+  <text x="40" y="736" class="small">Generated diagram for README overview</text>
+</svg>
