@@ -1,10 +1,12 @@
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseWithCovarianceStamped,Imu
+from geometry_msgs.msg import PoseWithCovarianceStamped
+from sensor_msgs.msg import Imu
 from nav_msgs.msg import Odometry
 
 import numpy as np
-from math import cos, sin
+from math import atan2, cos, sin
+from tf_transformations import euler_from_quaternion
 
 
 
@@ -13,10 +15,19 @@ class EkfFusion(Node):
         super().__init__('ekf_fusion')
 
         ### Variables ###
-        self.X = np.zeros(4) # [v, phi, px, py]
-        self.P = np.eye(4) * 0.1
-        self.Q = np.eye(4) * 0.01
+        self.P = np.eye(5) * 0.1
+        self.Q = np.eye(5) * 0.01
         self.dt = 0.1
+        self.X = np.zeros(5)  # [v, w, phi, px, py]
+        self.latest_imu = None
+        self.latest_odom = None
+        self.latest_icp_pose = None
+        self.latest_uav_pose = None
+
+        ## Timer for fusion loop ##
+        self.last_time = self.get_clock().now()
+        self.create_timer(0.02, self.fusion_loop)  # run at 50 Hz
+
 
 
         ### Subscribers ###
@@ -34,100 +45,138 @@ class EkfFusion(Node):
         self.ekf_P_pub = self.create_publisher(PoseWithCovarianceStamped, '/ugv/ekf/covariance', 10)
 
     ## Helper Functions ##
-    def wrap_to_pi(a):
+    def wrap_to_pi(self, a):
         return (a + np.pi) % (2*np.pi) - np.pi
+    
+    def compute_dt(self):
+        now = self.get_clock().now()
+        dt = (now - self.last_time).nanoseconds * 1e-9
+        self.last_time = now
+        # clamp to avoid crazy dt when debugging / pauses
+        return max(1e-3, min(dt, 0.1))
+
 
     ## EKF Functions ##
-    def predict_x(self,X,N,dt,a,w,phi):
+    def predict_x(self,X,dt,a):
 
-        v, phi, px, py = X
-        n_v, n_phi, n_px, n_py = N
+        v,w, phi, px, py = X
 
-        v_pred = v + dt*a + n_v
-        phi_pred = self.wrap_to_pi(phi + dt*w + n_phi)
-        px_pred = px + dt*cos(phi) + n_px
-        py_pred = py + dt*sin(phi) + n_py
+        v_pred = v + dt*a
+        w_pred = w
+        phi_pred = self.wrap_to_pi(phi + dt*w_pred)
+        px_pred = px + v*dt*cos(phi)
+        py_pred = py + v*dt*sin(phi)
 
-        X_pred =  np.array([v_pred,phi_pred,px_pred,py_pred])
+        X_pred =  np.array([v_pred,w_pred,phi_pred,px_pred,py_pred])
         return X_pred
 
 
     def predict_p(self,P,X,Q,dt):
 
-        v, phi, px, py = X
+        v,_, phi, _, _ = X
         phi = self.wrap_to_pi(phi)
-        jacob_n = np.eye(4)
-        jacob_x = np.array([[1,0,0,0],
-                        [0,1,0,0],
-                        [dt*cos(phi),-dt*v*sin(phi),1,0],
-                        [dt*sin(phi),dt*v*cos(phi),0,1]])
+        jacob_n = np.eye(5)
+        jacob_x = np.array([[1,0,0,0,0],
+                            [0,1,0,0,0],
+                            [0,dt,1,0,0],
+                            [dt*cos(phi),0,-dt*v*sin(phi),1,0],
+                            [dt*sin(phi),0,dt*v*cos(phi),0,1]])
         
         P_pred = jacob_x @ P @ jacob_x.T + jacob_n @ Q @ jacob_n.T
 
         return P_pred
     
         
-    def ekf_update(self,X_pred,P_pred,h_of_x,jacob_sens,z,R, jacob_inno):
+    def ekf_update(self,X_pred,P_pred,h_of_x,jacob_sens,z,R, jacob_inno, angle_index=None):
 
         innov = z - h_of_x
+
+        if angle_index is not None:
+            innov[angle_index] = self.wrap_to_pi(innov[angle_index])
+
+        I = np.eye(P_pred.shape[0])
 
         S = jacob_sens @ P_pred @ jacob_sens.T + jacob_inno @ R @ jacob_inno.T
         K = P_pred @ jacob_sens.T @ np.linalg.inv(S)
 
         X_upd = X_pred + K @ innov
-        P_upd = P_pred - K @ S @ K.T
+        P_upd = (I - K @ jacob_sens) @ P_pred @ (I - K @ jacob_sens).T + K @ jacob_inno @ R @ jacob_inno.T @ K.T
 
         return X_upd, P_upd, innov, S, K
     
     
     def fusion_loop(self):
 
+        dt = self.compute_dt()
+        a = self.latest_imu['a'] if self.latest_imu is not None else 0.0
+        self.X = self.predict_x(self.X, dt, a)
+
+        self.P = self.predict_p(self.P, self.X, self.Q, dt)
+
         if self.latest_odom is not None:
             v = self.latest_odom['v']
-            phi = self.latest_odom['phi']
-            px = self.latest_odom['px']
-            py = self.latest_odom['py']
-            h_of_x = np.array([px, py])
-            jacob_sens = np.array([[0,0,1,0],
-                                    [0,0,0,1]])
-            z = np.array([px, py])
+            w = self.latest_odom['w']
+            jacob_sens = np.array([[1,0,0,0,0],
+                                    [0,1,0,0,0]])
+            h_of_x = np.array([self.X[0], self.X[1]])
+            z = np.array([v, w])  
             R = np.eye(2) * 0.01
-            jacob_inno = np.eye(4)
+            jacob_inno = np.eye(2)
             self.X, self.P, _, _, _ = self.ekf_update(self.X, self.P, h_of_x, jacob_sens, z, R, jacob_inno)
 
         if self.latest_imu is not None:
-            a = self.latest_imu['a']
             w = self.latest_imu['w']
-            phi = self.latest_imu['phi']
-            h_of_x = np.array([self.X[0], phi, self.X[2], self.X[3]])
-            jacob_sens = np.eye(4)
-            z = np.array([self.X[0], phi, self.X[2], self.X[3]])
-            R = np.eye(4) * 0.01
-            jacob_inno = np.eye(4)
+            h_of_x = np.array([self.X[1]])
+            jacob_sens = np.array([[0,1,0,0,0]])
+            z = np.array([w])
+            R = np.eye(1) * 0.01
+            jacob_inno = np.eye(1)
             self.X, self.P, _, _, _ = self.ekf_update(self.X, self.P, h_of_x, jacob_sens, z, R, jacob_inno)
 
         
         if self.latest_icp_pose is not None:
             px = self.latest_icp_pose['px']
             py = self.latest_icp_pose['py']
-            h_of_x = np.array([px, py])
-            jacob_sens = np.array([[0,0,1,0],
-                                    [0,0,0,1]])
-            z = np.array([px, py])
+            phi = self.latest_icp_pose['phi']
+            h_of_x = np.array([self.X[2], self.X[3], self.X[4]])
+            jacob_sens = np.array([[0,0,1,0,0],
+                                    [0,0,0,1,0],
+                                    [0,0,0,0,1]])
+            z = np.array([phi,px, py])
             R = self.latest_icp_pose['R']
-            jacob_inno = np.eye(4)
-            self.X, self.P, _, _, _ = self.ekf_update(self.X, self.P, h_of_x, jacob_sens, z, R, jacob_inno)
+            jacob_inno = np.eye(3)
+            self.X, self.P, _, _, _ = self.ekf_update(self.X, self.P, h_of_x, jacob_sens, z, R, jacob_inno, angle_index=0)
 
         if self.latest_uav_pose is not None:
             px = self.latest_uav_pose['px']
             py = self.latest_uav_pose['py']
-            h_of_x = np.array([px, py])
-            jacob_sens = np.array([[0,0,1,0],
-                                    [0,0,0,1]])
+            h_of_x = np.array([self.X[3], self.X[4]])
+            jacob_sens = np.array([[0,0,0,1,0],
+                                    [0,0,0,0,1]])
             z = np.array([px, py])
             R = self.latest_uav_pose['R']
-            jacob_inno = np.eye(4)
+            jacob_inno = np.eye(2)
             self.X, self.P, _, _, _ = self.ekf_update(self.X, self.P, h_of_x, jacob_sens, z, R, jacob_inno)
+
+        self.publish_pose()
+
+
+    def publish_pose(self):
+        pose_msg = PoseWithCovarianceStamped()
+        pose_msg.header.stamp = self.get_clock().now().to_msg()
+        pose_msg.header.frame_id = 'map'
+        pose_msg.pose.pose.position.x = self.X[3]
+        pose_msg.pose.pose.position.y = self.X[4]
+        yaw = self.X[2]
+        pose_msg.pose.pose.orientation.z = sin(yaw/2)
+        pose_msg.pose.pose.orientation.w = cos(yaw/2)
+
+        cov = np.zeros((6,6))
+        cov[0,0] = self.P[3,3] # px variance
+        cov[1,1] = self.P[4,4] # py variance
+        cov[5,5] = self.P[2,2] # phi variance
+        pose_msg.pose.covariance = cov.reshape(-1).tolist()
+        self.ekf_pose_pub.publish(pose_msg)
 
     
     ## Callbacks ###
@@ -135,36 +184,34 @@ class EkfFusion(Node):
     def on_imu(self, msg: Imu):
         a = msg.linear_acceleration.x
         w = msg.angular_velocity.z
-        phi = msg.orientation.z
-        self.latest_imu = {'a': a, 'w': w, 'phi': phi}
+        self.latest_imu = {'a': a, 'w': w}
 
         
 
     def on_odom(self, msg: Odometry):
         v = msg.twist.twist.linear.x
-        phi = self.wrap_to_pi(msg.twist.twist.angular.z)
-        px = msg.pose.pose.position.x
-        py = msg.pose.pose.position.y
-        self.latest_odom = {'v': v, 'phi': phi, 'px': px, 'py': py}
+        w = msg.twist.twist.angular.z
+        self.latest_odom = {'v': v, 'w': w}
 
 
 
     def on_icp_pose(self, msg: PoseWithCovarianceStamped):
         px = msg.pose.pose.position.x
         py = msg.pose.pose.position.y
-        cov = msg.pose.covariance
-        R = np.array([[cov[0], cov[1]],
-                    [cov[6], cov[7]]])
-        self.latest_icp_pose = {'px': px, 'py': py, 'cov': cov, 'R': R}
+        cov = np.array(msg.pose.covariance).reshape(6,6)
+        q = msg.pose.pose.orientation
+        phi = euler_from_quaternion([q.x, q.y, q.z, q.w])[2]
+        phi = self.wrap_to_pi(phi)
+        R = np.diag([cov[5,5], cov[0,0], cov[1,1]])  
+        self.latest_icp_pose = {'px': px, 'py': py, 'phi': phi, 'cov': cov, 'R': R}
         
 
 
     def on_uav_pose(self, msg: PoseWithCovarianceStamped):
         px = msg.pose.pose.position.x
         py = msg.pose.pose.position.y
-        cov = msg.pose.covariance
-        R = np.array([[cov[0], cov[1]],
-                    [cov[6], cov[7]]])
+        cov = np.array(msg.pose.covariance).reshape(6,6)
+        R = np.diag([cov[0,0], cov[1,1]])  
         self.latest_uav_pose = {'px': px, 'py': py, 'cov': cov, 'R': R}
 
 
