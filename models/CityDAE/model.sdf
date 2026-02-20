@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<sdf version="1.6">
+  <model name="CityDAE">
+    <static>true</static>
+
+    <link name="link">
+      <!-- Rotation X +90° (adjust if needed) -->
+      <pose>0 0 0 0 0 0</pose>
+
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://CityDAE/meshes/model.dae</uri>
+          </mesh>
+        </geometry>
+      </visual>
+
+      <!-- Collision enabled for physics.
+           WARNING: can be heavy for large city meshes. -->
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <uri>model://CityDAE/meshes/model.dae</uri>
+            <scale>0.01 0.01 0.01</scale>
+          </mesh>
+
+        </geometry>
+      </collision>
+    </link>
+
+  </model>
+</sdf>

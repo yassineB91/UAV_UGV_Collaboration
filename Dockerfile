@@ -23,7 +23,8 @@ RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g' /etc/apt/s
 # ==========================================
 # BASE DEPENDENCIES
 # ==========================================
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     wget curl gnupg2 lsb-release \
     git cmake build-essential ninja-build \
@@ -32,8 +33,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pygments python3-kconfiglib python3-packaging \
     python3-pexpect python3-future python3-serial python3-lxml \
     protobuf-compiler libprotobuf-dev libeigen3-dev libopencv-dev \
-    libasio-dev libtinyxml2-dev libssl-dev \
-    && rm -rf /var/lib/apt/lists/*
+    libasio-dev libtinyxml2-dev libssl-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 #==============================================
 
@@ -56,7 +57,8 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
 # REMOVE GZ (Ignition/Garden/Fortress/Harmonic) IF PRESENT
 # (avoid conflicts with Gazebo Classic)
 # ==========================================
-RUN apt-get update && \
+RUN set -eux; \
+    apt-get update && \
     apt-get remove -y \
         gz-garden \
         gz-fortress \
@@ -76,13 +78,10 @@ RUN apt-get update && \
 # ==========================================
 # GAZEBO CLASSIC 11 (gzserver/gzclient)
 # ==========================================
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gazebo \
-    gazebo-common \
-    gazebo-plugin-base \
-    libgazebo-dev \
-    libgazebo11 \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    apt-get update \
+    apt-get install -y gazebo libgazebo-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 # ==========================================
 # ROS 2 PACKAGES (GAZEBO CLASSIC) ✅ PERMANENT
@@ -90,7 +89,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # - ros-humble-gazebo-ros-pkgs
 # - ros-humble-gazebo-ros2-control (brings libgazebo_ros2_control.so)
 # ==========================================
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
     python3-colcon-common-extensions \
     ros-humble-xacro \
     ros-humble-joint-state-publisher-gui \
@@ -116,18 +116,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-opencv \
     ros-humble-cv-bridge \
     ros-humble-sensor-msgs-py \
-    ros-humble-vision-msgs \
-    && rm -rf /var/lib/apt/lists/*
+    ros-humble-vision-msgs && \
+    rm -rf /var/lib/apt/lists/*
 
 # ==========================================
 # ✅ MAVROS (ROS2) + GeographicLib datasets (permanent)
 # This avoids doing it manually in the container.
 # ==========================================
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
     ros-humble-mavros \
     ros-humble-mavros-extras \
-    geographiclib-tools \
-    && rm -rf /var/lib/apt/lists/*
+    geographiclib-tools && \
+    rm -rf /var/lib/apt/lists/*
 
 # MAVROS needs GeographicLib datasets (EGM96 etc.)
 RUN /opt/ros/humble/lib/mavros/install_geographiclib_datasets.sh || true
@@ -135,7 +136,8 @@ RUN /opt/ros/humble/lib/mavros/install_geographiclib_datasets.sh || true
 # ==========================================
 # GSTREAMER (PX4 cameras)
 # ==========================================
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    apt-get update && apt-get install -y --no-install-recommends \
     libgstreamer1.0-dev \
     libgstreamer-plugins-base1.0-dev \
     libgstreamer-plugins-good1.0-dev \
@@ -143,8 +145,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gstreamer1.0-plugins-good \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-plugins-ugly \
-    gstreamer1.0-libav \
-    && rm -rf /var/lib/apt/lists/*
+    gstreamer1.0-libav && \
+    rm -rf /var/lib/apt/lists/*
 
 # ==========================================
 # MICRO-XRCE-DDS-AGENT (SUPERBUILD=ON, v2.x)
@@ -191,8 +193,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     x11-apps \
     mesa-utils \
     libgl1-mesa-glx \
-    libgl1-mesa-dri \
-    && rm -rf /var/lib/apt/lists/*
+    libgl1-mesa-dri && \
+    rm -rf /var/lib/apt/lists/*
 
 # ==========================================
 # ROS 2 WORKSPACE (px4_msgs + px4_ros_com aligned)
