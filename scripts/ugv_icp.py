@@ -120,6 +120,32 @@ class ICPNode(Node):
 
         return msg
 
+    def make_map_to_odom_transform(self, stamp, parent_frame: str = 'map', child_frame: str = 'robot1/odom') -> TransformStamped:
+        if self.R_retained is None or self.t_retained is None:
+            raise ValueError("R_retained/t_retained not initialized")
+        if self.R_odom_curr is None or self.t_odom_curr is None:
+            raise ValueError("Odom transform not initialized")
+
+        R_map_base = self.R_retained
+        t_map_base = self.t_retained
+        R_odom_base = self.R_odom_curr
+        t_odom_base = self.t_odom_curr
+
+        R_map_odom = R_map_base @ R_odom_base.T
+        t_map_odom = t_map_base - R_map_odom @ t_odom_base
+        theta_map_odom = float(atan2(R_map_odom[1, 0], R_map_odom[0, 0]))
+
+        msg = TransformStamped()
+        msg.header.stamp = stamp
+        msg.header.frame_id = parent_frame
+        msg.child_frame_id = child_frame
+        msg.transform.translation.x = float(t_map_odom[0])
+        msg.transform.translation.y = float(t_map_odom[1])
+        msg.transform.translation.z = 0.0
+        msg.transform.rotation.z = sin(theta_map_odom / 2.0)
+        msg.transform.rotation.w = cos(theta_map_odom / 2.0)
+        return msg
+
     def publish_target_normals(self, stamp, frame_id: str = 'map', normal_length: float = 0.2):
         marker = Marker()
         marker.header.stamp = stamp
@@ -502,6 +528,9 @@ class ICPNode(Node):
         self.t_odom_prev = self.t_odom_curr.copy()
 
         self.pose_pub.publish(self.make_pose_with_covariance_stamped(t_scan))
+        tf_msg = self.make_map_to_odom_transform(t_scan)
+        self.transform_pub.publish(tf_msg)
+        self.tf_broadcaster.sendTransform(tf_msg)
         
         
 
@@ -532,6 +561,11 @@ class ICPNode(Node):
                 0.25,
                 np.deg2rad(20.0) ** 2,
             ])
+
+        if self.R_retained is not None and self.t_retained is not None:
+            tf_msg = self.make_map_to_odom_transform(odom_msg.header.stamp)
+            self.transform_pub.publish(tf_msg)
+            self.tf_broadcaster.sendTransform(tf_msg)
 
 
 
