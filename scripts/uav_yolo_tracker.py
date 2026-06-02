@@ -2,16 +2,21 @@ import rclpy
 from rclpy.node import Node
 from ultralytics import YOLO
 from cv_bridge import CvBridge
+import numpy as np
 
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2DArray, Detection2D
 from vision_msgs.msg import BoundingBox2D, ObjectHypothesisWithPose
 
-
-
 class UavYoloTracker(Node):
     def __init__(self):
         super().__init__("uav_yolo_tracker")
+
+
+        use_sim_time = self.get_parameter('use_sim_time').value
+        self.get_logger().info(f"use_sim_time = {use_sim_time}")
+
+        
         self.bridge = CvBridge()
 
         self.model_path = '/root/dev_ws/src/my_package/config/best.pt'
@@ -26,7 +31,6 @@ class UavYoloTracker(Node):
         self.img_sub = self.create_subscription(Image,'/uav/camera/image_raw',self.on_image,10)
 
         self.get_logger().info('UAV YOLO tracker is running')
-
 
     def on_image(self, msg: Image):
         try:

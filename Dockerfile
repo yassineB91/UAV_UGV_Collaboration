@@ -24,17 +24,17 @@ RUN sed -i 's|http://archive.ubuntu.com|https://archive.ubuntu.com|g' /etc/apt/s
 # BASE DEPENDENCIES
 # ==========================================
 RUN set -eux; \
-    apt-get update && apt-get install -y --no-install-recommends \
+  apt-get update && apt-get install -y --no-install-recommends \
     software-properties-common \
     wget curl gnupg2 lsb-release \
     git cmake build-essential ninja-build \
-    python3-pip python3-dev python3-jinja2 python3-numpy python3-yaml \
+    python3-pip python3-dev python3-jinja2 python3-yaml \
     python3-empy python3-setuptools python3-toml \
     python3-pygments python3-kconfiglib python3-packaging \
     python3-pexpect python3-future python3-serial python3-lxml \
     protobuf-compiler libprotobuf-dev libeigen3-dev libopencv-dev \
     libasio-dev libtinyxml2-dev libssl-dev && \
-    rm -rf /var/lib/apt/lists/*
+  rm -rf /var/lib/apt/lists/*
 
 #==============================================
 
@@ -42,6 +42,15 @@ RUN set -eux; \
 ENV ULTRALYTICS_SKIP_REQUIREMENTS_CHECKS=1
 
 
+# pip scientific stack pinned (source of truth)
+RUN python3 -m pip install --no-cache-dir \
+      numpy==1.26.4 \
+      scipy==1.11.4 \
+      lap==0.5.12 \
+      "sympy>=1.12,<1.14"
+
+# Force /usr/local before apt dist-packages at runtime (no venv)
+ENV PYTHONPATH="/usr/local/lib/python3.10/dist-packages:${PYTHONPATH}"
 
 
 # ==========================================
@@ -250,18 +259,13 @@ RUN echo "" >> ~/.bashrc && \
     echo "export GAZEBO_PLUGIN_PATH=/opt/ros/humble/lib:\$GAZEBO_PLUGIN_PATH" >> ~/.bashrc
 
 # ==========================================
-# Ultralytics YOLO (and deps)
+# Ultralytics YOLO (PINNED, no-deps)
 # ==========================================
-RUN python3 -m pip install --no-cache-dir --break-system-packages ultralytics
+ARG ULTRALYTICS_VERSION=8.4.14
+RUN python3 -m pip install --no-cache-dir --no-deps "ultralytics==${ULTRALYTICS_VERSION}"
 
 
 #============================================
-# Fix YOLO deps: garder numpy 1.x (cv_bridge) + scipy/lap + sympy compatible torch
-RUN python3 -m pip install --no-cache-dir --break-system-packages --ignore-installed \
-    numpy==1.26.4 \
-    scipy==1.11.4 \
-    lap==0.5.12 \
-    "sympy>=1.12,<1.14"
 
 # ==========================================
 # ENTRYPOINT

@@ -13,6 +13,9 @@ import numpy as np
 import math
 from cv_bridge import CvBridge
 
+from rclpy.qos import QoSProfile , DurabilityPolicy, ReliabilityPolicy, HistoryPolicy
+
+
 
 
 def get_distance_from_pixel(u, v,altitude):
@@ -99,14 +102,14 @@ def build_obstacle_mask(bgr_image, xyxy_boxes=None):
     obstacle_mask = np.zeros_like(image_gray)
     for i in range(len(contours)):
         if hierarchy[0][i][3] == -1:  # no parent
-            cv2.drawContours(obstacle_mask, contours, i, 255, -1)
+            cv2.drawContours(obstacle_mask, contours, i, 255, 1)
 
     if xyxy_boxes is not None and len(xyxy_boxes) > 0:
                 for x1, y1, x2, y2 in xyxy_boxes:
                     # clip pour éviter les soucis de limites
                     x1 = max(0, min(int(x1), w-1)); x2 = max(0, min(int(x2), w-1))
                     y1 = max(0, min(int(y1), h-1)); y2 = max(0, min(int(y2), h-1))
-                    cv2.rectangle(obstacle_mask, (int(x1), int(y1)), (int(x2), int(y2)), 0, thickness=-1)
+                    cv2.rectangle(obstacle_mask, (int(x1), int(y1)), (int(x2), int(y2)), 0, thickness=1)
     return obstacle_mask
 
 
@@ -159,6 +162,18 @@ def make_pose_stamped(x: float, y: float, stamp, frame_id: str ='map') -> PoseSt
 class UavProjectionNode(Node):
     def __init__(self):
         super().__init__('uav_projection_node')
+
+        use_sim_time = self.get_parameter('use_sim_time').value
+        self.get_logger().info(f"use_sim_time = {use_sim_time}")
+
+        map_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
+
+        self.last_goal = None
         
         self.bridge = CvBridge()
 
@@ -166,7 +181,7 @@ class UavProjectionNode(Node):
         self.imu_q = None
         self.detections = None
         
-        self.map_pub = self.create_publisher(OccupancyGrid, '/map',10)
+        self.map_pub = self.create_publisher(OccupancyGrid, '/map',map_qos)
         self.mask_pub = self.create_publisher(Image, '/uav/obstacle_mask',10)
         # for fusion later using EKF
         # self.ugv_cov_pub =  self.create_publisher(PoseWithCovarianceStamped,'/uav/ugv_pose_map_cov',10)
@@ -236,8 +251,11 @@ class UavProjectionNode(Node):
         if 0 in centers_px:
             cu, cv = centers_px[0]
             tx, ty, res = pixel_to_map_EN(cu,cv,RT,self.altitude)
+            self.last_goal = (tx, ty)
 
-        self.target_goal_pub.publish(make_pose_stamped(tx, ty, msg.header.stamp))
+        if self.last_goal is not None:
+            tx, ty = self.last_goal
+            self.target_goal_pub.publish(make_pose_stamped(tx, ty, msg.header.stamp))
 
 
 

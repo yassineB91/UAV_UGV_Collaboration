@@ -3,17 +3,33 @@ from rclpy.node import Node
 
 from sensor_msgs.msg import Image, Range, Imu, LaserScan
 from nav_msgs.msg import Odometry
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy, DurabilityPolicy
 
 
 class ugvSensorBridge(Node):
     def __init__(self):
         super().__init__('ugv_sensor_bridge')
 
+        scan_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+
+        self.alt_pub = self.create_publisher(
+            LaserScan,
+            '/ugv/scan',
+            scan_qos
+        )
+
+        use_sim_time = self.get_parameter('use_sim_time').value
+        self.get_logger().info(f"use_sim_time = {use_sim_time}")
 
         self.img_pub = self.create_publisher(Image,'/ugv/camera/image_raw',10)
         self.imu_pub = self.create_publisher(Imu,'/ugv/imu',10)
         self.odom_pub = self.create_publisher(Odometry,'/ugv/odom',10)
-        self.alt_pub = self.create_publisher(LaserScan,'/ugv/scan',10)
+ 
 
         self.img_sub = self.create_subscription(Image,'/camera/image_raw',self.on_img, 10)
         self.imu_sub = self.create_subscription(Imu,'/imu',self.on_imu ,10)
@@ -34,6 +50,8 @@ class ugvSensorBridge(Node):
         self.odom_pub.publish(msg)
 
     def on_scan(self, msg: LaserScan):
+        msg.header.frame_id = "robot1/laser_frame"
+        msg.header.stamp = self.get_clock().now().to_msg()
         self.alt_pub.publish(msg)
 
 

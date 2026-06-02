@@ -13,6 +13,10 @@ class UavSensorBridge(Node):
     def __init__(self):
         super().__init__('uav_sensor_bridge')
 
+
+        use_sim_time = self.get_parameter('use_sim_time').value
+        self.get_logger().info(f"use_sim_time = {use_sim_time}")
+
         sensor_qos = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
