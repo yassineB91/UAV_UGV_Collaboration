@@ -483,6 +483,10 @@ class ICPNode(Node):
         if self.R_odom_prev is None or self.t_odom_prev is None or self.R_odom_curr is None or self.t_odom_curr is None:
             self.get_logger().warn('Odom not initialized yet', throttle_duration_sec=5.0)
             return
+
+        if self.R_retained is None or self.t_retained is None:
+            self.get_logger().warn('Retained pose not initialized yet', throttle_duration_sec=5.0)
+            return
             
         self.source = self.get_points_from_scan(scan_msg)
 
@@ -490,8 +494,8 @@ class ICPNode(Node):
             self.get_logger().warn('Scan has no usable points', throttle_duration_sec=5.0)
             return
 
-        R_delta, t_delta = self.relative_transform(self.R_odom_prev, self.t_odom_prev, self.R_odom_curr, self.t_odom_curr)
-        R_pred, t_pred = self.compose_transform(self.R_retained, self.t_retained, R_delta, t_delta)
+        R_pred = self.R_retained.copy()
+        t_pred = self.t_retained.copy()
 
         _, _, _, mean_error, _, R_icp, t_icp, _, icp_valid = self.icp_pose(
             self.source,
@@ -526,9 +530,6 @@ class ICPNode(Node):
                 self.retained_covariance[1, 1] += 0.01
                 self.retained_covariance[2, 2] += np.deg2rad(2.0) ** 2
 
-        self.R_odom_prev = self.R_odom_curr.copy()
-        self.t_odom_prev = self.t_odom_curr.copy()
-
         self.pose_pub.publish(self.make_pose_with_covariance_stamped(t_scan))
         tf_msg = self.make_map_to_odom_transform(t_scan)
         self.transform_pub.publish(tf_msg)
@@ -554,8 +555,6 @@ class ICPNode(Node):
         self.pose_initialized = True
 
         if self.R_odom_prev is None:
-            self.R_odom_prev = self.R_odom_curr.copy()
-            self.t_odom_prev = self.t_odom_curr.copy()
             # map->base starts from the configured map->odom offset composed with odom->base.
             self.R_retained, self.t_retained = self.compose_transform(
                 self.R_map_odom_init,
@@ -568,8 +567,30 @@ class ICPNode(Node):
                 0.25,
                 np.deg2rad(20.0) ** 2,
             ])
+        elif self.R_retained is not None and self.t_retained is not None:
+            R_delta, t_delta = self.relative_transform(
+                self.R_odom_prev,
+                self.t_odom_prev,
+                self.R_odom_curr,
+                self.t_odom_curr,
+            )
+            self.R_retained, self.t_retained = self.compose_transform(
+                self.R_retained,
+                self.t_retained,
+                R_delta,
+                t_delta,
+            )
+            if self.retained_covariance is not None:
+                self.retained_covariance = self.retained_covariance.copy()
+                self.retained_covariance[0, 0] += 0.001
+                self.retained_covariance[1, 1] += 0.001
+                self.retained_covariance[2, 2] += np.deg2rad(0.5) ** 2
+
+        self.R_odom_prev = self.R_odom_curr.copy()
+        self.t_odom_prev = self.t_odom_curr.copy()
 
         if self.R_retained is not None and self.t_retained is not None:
+            self.pose_pub.publish(self.make_pose_with_covariance_stamped(odom_msg.header.stamp))
             tf_msg = self.make_map_to_odom_transform(odom_msg.header.stamp)
             self.transform_pub.publish(tf_msg)
             self.tf_broadcaster.sendTransform(tf_msg)

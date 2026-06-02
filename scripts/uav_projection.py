@@ -109,7 +109,7 @@ def build_obstacle_mask(bgr_image, xyxy_boxes=None):
                     # clip pour éviter les soucis de limites
                     x1 = max(0, min(int(x1), w-1)); x2 = max(0, min(int(x2), w-1))
                     y1 = max(0, min(int(y1), h-1)); y2 = max(0, min(int(y2), h-1))
-                    cv2.rectangle(obstacle_mask, (int(x1), int(y1)), (int(x2), int(y2)), 0, thickness=1)
+                    cv2.rectangle(obstacle_mask, (int(x1), int(y1)), (int(x2), int(y2)), 0, thickness=-1)
     return obstacle_mask
 
 
