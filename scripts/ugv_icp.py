@@ -48,6 +48,7 @@ class ICPNode(Node):
         self.retained_covariance = None
         self.R_odom_curr = None
         self.t_odom_curr = None
+        # Initial map->odom offset used to place the odom tree in the map frame.
         self.R_map_odom_init = np.eye(2, dtype=float)
         self.t_map_odom_init = np.array([0.0, -4.0], dtype=float)
 
@@ -555,6 +556,7 @@ class ICPNode(Node):
         if self.R_odom_prev is None:
             self.R_odom_prev = self.R_odom_curr.copy()
             self.t_odom_prev = self.t_odom_curr.copy()
+            # map->base starts from the configured map->odom offset composed with odom->base.
             self.R_retained, self.t_retained = self.compose_transform(
                 self.R_map_odom_init,
                 self.t_map_odom_init,
