@@ -48,6 +48,8 @@ class ICPNode(Node):
         self.retained_covariance = None
         self.R_odom_curr = None
         self.t_odom_curr = None
+        self.R_map_odom_init = np.eye(2, dtype=float)
+        self.t_map_odom_init = np.array([0.0, -4.0], dtype=float)
 
         self.cb_main = MutuallyExclusiveCallbackGroup()
 
@@ -186,7 +188,7 @@ class ICPNode(Node):
     def get_transform_from_pose(self,x, y, theta):
         R = np.array([[np.cos(theta), -np.sin(theta)],
                     [np.sin(theta),  np.cos(theta)]], dtype=float)
-        t = np.array([x, y-4], dtype=float)
+        t = np.array([x, y], dtype=float)
         return R, t
     
     def get_pose_from_transform(self,R, t):
@@ -220,11 +222,10 @@ class ICPNode(Node):
 
         grid = np.array(grid_msg.data, dtype=np.int16).reshape(height, width)
         bw = np.flipud((grid >= 50).astype(np.uint8) * 255)
-
-        kernel = np.ones((3, 3), np.uint8)
-        bw = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel, iterations=1)
+        self.get_logger().info(f"occupied cells in grid: {np.count_nonzero(grid >= 50)}", throttle_duration_sec=5.0)
 
         contours, _ = cv2.findContours(bw, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        self.get_logger().info(f"contours found in occupancy grid: {len(contours)}", throttle_duration_sec=5.0)
 
         points = []
         normals = []
@@ -554,8 +555,12 @@ class ICPNode(Node):
         if self.R_odom_prev is None:
             self.R_odom_prev = self.R_odom_curr.copy()
             self.t_odom_prev = self.t_odom_curr.copy()
-            self.R_retained = self.R_odom_curr.copy()
-            self.t_retained = self.t_odom_curr.copy()
+            self.R_retained, self.t_retained = self.compose_transform(
+                self.R_map_odom_init,
+                self.t_map_odom_init,
+                self.R_odom_curr,
+                self.t_odom_curr,
+            )
             self.retained_covariance = np.diag([
                 0.25,
                 0.25,
