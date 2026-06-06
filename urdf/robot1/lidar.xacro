@@ -1,7 +1,6 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-    <!-- Add this at the top of your URDF if not already there -->
     <xacro:arg name="robot_name" default="robot"/>
     <xacro:property name="robot_name" value="$(arg robot_name)"/>
 
@@ -53,7 +52,6 @@
                     <argument>~/out:=scan</argument>
                 </ros>
                 <output_type>sensor_msgs/LaserScan</output_type>
-                <!-- Use the xacro property here -->
                 <frame_name>laser_frame</frame_name>
             </plugin>
         </sensor>

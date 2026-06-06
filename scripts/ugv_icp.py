@@ -40,6 +40,8 @@ class ICPNode(Node):
         self.target_points = None
         self.target_normals = None
         self.last_odom_stamp = None
+        self.odom_buffer = deque(maxlen=200)
+        self.pending_scans = deque(maxlen=20)
 
         self.R_odom_prev = None
         self.t_odom_prev = None
@@ -48,6 +50,8 @@ class ICPNode(Node):
         self.retained_covariance = None
         self.R_odom_curr = None
         self.t_odom_curr = None
+        self.R_map_odom_retained = None
+        self.t_map_odom_retained = None
         # Initial map->odom offset used to place the odom tree in the map frame.
         self.R_map_odom_init = np.eye(2, dtype=float)
         self.t_map_odom_init = np.array([0.0, -4.0], dtype=float)
@@ -124,18 +128,11 @@ class ICPNode(Node):
         return msg
 
     def make_map_to_odom_transform(self, stamp, parent_frame: str = 'map', child_frame: str = 'robot1/odom') -> TransformStamped:
-        if self.R_retained is None or self.t_retained is None:
-            raise ValueError("R_retained/t_retained not initialized")
-        if self.R_odom_curr is None or self.t_odom_curr is None:
-            raise ValueError("Odom transform not initialized")
+        if self.R_map_odom_retained is None or self.t_map_odom_retained is None:
+            raise ValueError("map->odom transform not initialized")
 
-        R_map_base = self.R_retained
-        t_map_base = self.t_retained
-        R_odom_base = self.R_odom_curr
-        t_odom_base = self.t_odom_curr
-
-        R_map_odom = R_map_base @ R_odom_base.T
-        t_map_odom = t_map_base - R_map_odom @ t_odom_base
+        R_map_odom = self.R_map_odom_retained
+        t_map_odom = self.t_map_odom_retained
         theta_map_odom = float(atan2(R_map_odom[1, 0], R_map_odom[0, 0]))
 
         msg = TransformStamped()
@@ -207,6 +204,75 @@ class ICPNode(Node):
         R = R1 @ R2
         t = R1 @ t2 + t1
         return R, t
+
+    def stamp_to_seconds(self, stamp):
+        return float(stamp.sec) + 1e-9 * float(stamp.nanosec)
+
+    def interpolate_angle(self, theta_before, theta_after, alpha):
+        dtheta = atan2(sin(theta_after - theta_before), cos(theta_after - theta_before))
+        theta = theta_before + alpha * dtheta
+        return atan2(sin(theta), cos(theta))
+
+    def refresh_current_base_pose(self):
+        if (
+            self.R_map_odom_retained is None
+            or self.t_map_odom_retained is None
+            or self.R_odom_curr is None
+            or self.t_odom_curr is None
+        ):
+            return False
+
+        self.R_retained, self.t_retained = self.compose_transform(
+            self.R_map_odom_retained,
+            self.t_map_odom_retained,
+            self.R_odom_curr,
+            self.t_odom_curr,
+        )
+        return True
+
+    def publish_retained_pose(self, stamp):
+        self.pose_pub.publish(self.make_pose_with_covariance_stamped(stamp))
+        tf_msg = self.make_map_to_odom_transform(stamp)
+        self.transform_pub.publish(tf_msg)
+        self.tf_broadcaster.sendTransform(tf_msg)
+
+    def interpolate_odom_at(self, stamp):
+        if len(self.odom_buffer) == 0:
+            return None, None, 'insufficient'
+
+        t_query = self.stamp_to_seconds(stamp)
+        eps = 1e-9
+        oldest = self.odom_buffer[0]
+        latest = self.odom_buffer[-1]
+
+        if t_query < oldest['time'] - eps:
+            return None, None, 'past'
+
+        if abs(t_query - oldest['time']) <= eps:
+            return oldest['R'].copy(), oldest['t'].copy(), 'ok'
+
+        if t_query > latest['time'] + eps:
+            return None, None, 'future'
+
+        if abs(t_query - latest['time']) <= eps:
+            return latest['R'].copy(), latest['t'].copy(), 'ok'
+
+        for idx in range(len(self.odom_buffer) - 1):
+            before = self.odom_buffer[idx]
+            after = self.odom_buffer[idx + 1]
+            if before['time'] - eps <= t_query <= after['time'] + eps:
+                dt = after['time'] - before['time']
+                if dt <= eps:
+                    return before['R'].copy(), before['t'].copy(), 'ok'
+
+                alpha = (t_query - before['time']) / dt
+                x = before['x'] + alpha * (after['x'] - before['x'])
+                y = before['y'] + alpha * (after['y'] - before['y'])
+                theta = self.interpolate_angle(before['theta'], after['theta'], alpha)
+                R_interp, t_interp = self.get_transform_from_pose(x, y, theta)
+                return R_interp, t_interp, 'ok'
+
+        return None, None, 'future'
 
         
 
@@ -461,41 +527,31 @@ class ICPNode(Node):
         self.target_points, self.target_normals = self.extract_obstacles_with_normals(map_msg, k_neighbors)
         self.publish_target_normals(map_msg.header.stamp, map_msg.header.frame_id)
 
+    def process_buffered_scan(self, scan_msg: LaserScan):
+        R_odom_scan, t_odom_scan, odom_status = self.interpolate_odom_at(scan_msg.header.stamp)
 
-##################################### Scan Callback ##################################
-       
-    def scan_callback(self, scan_msg: LaserScan):
-    
-        t_scan = scan_msg.header.stamp
+        if odom_status == 'future':
+            return 'waiting'
 
-        if self.target_points is None or self.target_normals is None:
-            self.get_logger().warn('Map not received yet', throttle_duration_sec=5.0)
-            return
+        if odom_status != 'ok':
+            self.get_logger().warn(
+                f"Dropping scan at {self.stamp_to_seconds(scan_msg.header.stamp):.3f}s: "
+                f"no bracketing odom sample ({odom_status})",
+                throttle_duration_sec=1.0,
+            )
+            return 'dropped'
 
-        if len(self.target_points) == 0 or len(self.target_normals) == 0:
-            self.get_logger().warn('Map has no usable obstacle points yet', throttle_duration_sec=5.0)
-            return
-            
-        if not self.pose_initialized:
-            self.get_logger().warn('Pose not initialized', throttle_duration_sec=5.0)
-            return
-
-        if self.R_odom_prev is None or self.t_odom_prev is None or self.R_odom_curr is None or self.t_odom_curr is None:
-            self.get_logger().warn('Odom not initialized yet', throttle_duration_sec=5.0)
-            return
-
-        if self.R_retained is None or self.t_retained is None:
-            self.get_logger().warn('Retained pose not initialized yet', throttle_duration_sec=5.0)
-            return
-            
         self.source = self.get_points_from_scan(scan_msg)
-
         if self.source.shape[0] == 0:
             self.get_logger().warn('Scan has no usable points', throttle_duration_sec=5.0)
-            return
+            return 'dropped'
 
-        R_pred = self.R_retained.copy()
-        t_pred = self.t_retained.copy()
+        R_pred, t_pred = self.compose_transform(
+            self.R_map_odom_retained,
+            self.t_map_odom_retained,
+            R_odom_scan,
+            t_odom_scan,
+        )
 
         _, _, _, mean_error, _, R_icp, t_icp, _, icp_valid = self.icp_pose(
             self.source,
@@ -508,19 +564,25 @@ class ICPNode(Node):
         )
 
         dist_from_seed = np.linalg.norm(t_icp - t_pred)
-        theta_pred = np.arctan2(R_pred[1,0], R_pred[0,0])
-        theta_icp = np.arctan2(R_icp[1,0], R_icp[0,0])
+        theta_pred = np.arctan2(R_pred[1, 0], R_pred[0, 0])
+        theta_icp = np.arctan2(R_icp[1, 0], R_icp[0, 0])
         yaw_jump = np.arctan2(np.sin(theta_icp - theta_pred), np.cos(theta_icp - theta_pred))
 
-        accepted = icp_valid and np.isfinite(mean_error) and (dist_from_seed <= 2.0) and (abs(yaw_jump) <= np.deg2rad(30))
+        accepted = (
+            icp_valid
+            and np.isfinite(mean_error)
+            and (dist_from_seed <= 2.0)
+            and (abs(yaw_jump) <= np.deg2rad(30))
+        )
 
         if accepted:
+            self.R_map_odom_retained = R_icp @ R_odom_scan.T
+            self.t_map_odom_retained = t_icp - self.R_map_odom_retained @ t_odom_scan
             self.R_retained = R_icp
             self.t_retained = t_icp
             cov_xy = max(0.02, mean_error ** 2)
             cov_yaw = max(np.deg2rad(5.0) ** 2, 0.5 * mean_error)
             self.retained_covariance = np.diag([cov_xy, cov_xy, cov_yaw])
-
         else:
             self.R_retained = R_pred
             self.t_retained = t_pred
@@ -530,10 +592,49 @@ class ICPNode(Node):
                 self.retained_covariance[1, 1] += 0.01
                 self.retained_covariance[2, 2] += np.deg2rad(2.0) ** 2
 
-        self.pose_pub.publish(self.make_pose_with_covariance_stamped(t_scan))
-        tf_msg = self.make_map_to_odom_transform(t_scan)
-        self.transform_pub.publish(tf_msg)
-        self.tf_broadcaster.sendTransform(tf_msg)
+        self.publish_retained_pose(scan_msg.header.stamp)
+
+        # Keep the internal "current pose" aligned with the latest odom sample.
+        self.refresh_current_base_pose()
+        return 'processed'
+
+    def try_process_pending_scans(self):
+        while self.pending_scans:
+            status = self.process_buffered_scan(self.pending_scans[0])
+            if status == 'waiting':
+                break
+            self.pending_scans.popleft()
+
+
+##################################### Scan Callback ##################################
+       
+    def scan_callback(self, scan_msg: LaserScan):
+        if self.target_points is None or self.target_normals is None:
+            self.get_logger().warn('Map not received yet', throttle_duration_sec=5.0)
+            return
+
+        if len(self.target_points) == 0 or len(self.target_normals) == 0:
+            self.get_logger().warn('Map has no usable obstacle points yet', throttle_duration_sec=5.0)
+            return
+            
+        if not self.pose_initialized:
+            self.get_logger().warn('Pose not initialized', throttle_duration_sec=5.0)
+            return
+
+        if self.R_odom_curr is None or self.t_odom_curr is None:
+            self.get_logger().warn('Odom not initialized yet', throttle_duration_sec=5.0)
+            return
+
+        if self.R_map_odom_retained is None or self.t_map_odom_retained is None:
+            self.get_logger().warn('map->odom correction not initialized yet', throttle_duration_sec=5.0)
+            return
+
+        if len(self.pending_scans) >= self.pending_scans.maxlen:
+            self.pending_scans.popleft()
+            self.get_logger().warn('Pending scan queue full, dropping oldest scan', throttle_duration_sec=1.0)
+
+        self.pending_scans.append(scan_msg)
+        self.try_process_pending_scans()
         
         
 
@@ -553,47 +654,38 @@ class ICPNode(Node):
 
         self.R_odom_curr, self.t_odom_curr = self.get_transform_from_pose(x_odom, y_odom, theta_odom)
         self.pose_initialized = True
+        self.odom_buffer.append({
+            'time': self.stamp_to_seconds(odom_msg.header.stamp),
+            'x': float(x_odom),
+            'y': float(y_odom),
+            'theta': float(theta_odom),
+            'R': self.R_odom_curr.copy(),
+            't': self.t_odom_curr.copy(),
+        })
 
-        if self.R_odom_prev is None:
-            # map->base starts from the configured map->odom offset composed with odom->base.
-            self.R_retained, self.t_retained = self.compose_transform(
-                self.R_map_odom_init,
-                self.t_map_odom_init,
-                self.R_odom_curr,
-                self.t_odom_curr,
-            )
+        if self.R_map_odom_retained is None or self.t_map_odom_retained is None:
+            self.R_map_odom_retained = self.R_map_odom_init.copy()
+            self.t_map_odom_retained = self.t_map_odom_init.copy()
             self.retained_covariance = np.diag([
                 0.25,
                 0.25,
                 np.deg2rad(20.0) ** 2,
             ])
-        elif self.R_retained is not None and self.t_retained is not None:
-            R_delta, t_delta = self.relative_transform(
-                self.R_odom_prev,
-                self.t_odom_prev,
-                self.R_odom_curr,
-                self.t_odom_curr,
-            )
-            self.R_retained, self.t_retained = self.compose_transform(
-                self.R_retained,
-                self.t_retained,
-                R_delta,
-                t_delta,
-            )
-            if self.retained_covariance is not None:
-                self.retained_covariance = self.retained_covariance.copy()
-                self.retained_covariance[0, 0] += 0.001
-                self.retained_covariance[1, 1] += 0.001
-                self.retained_covariance[2, 2] += np.deg2rad(0.5) ** 2
+
+        self.try_process_pending_scans()
+        self.refresh_current_base_pose()
+
+        if self.retained_covariance is not None:
+            self.retained_covariance = self.retained_covariance.copy()
+            self.retained_covariance[0, 0] += 0.001
+            self.retained_covariance[1, 1] += 0.001
+            self.retained_covariance[2, 2] += np.deg2rad(0.5) ** 2
 
         self.R_odom_prev = self.R_odom_curr.copy()
         self.t_odom_prev = self.t_odom_curr.copy()
 
         if self.R_retained is not None and self.t_retained is not None:
-            self.pose_pub.publish(self.make_pose_with_covariance_stamped(odom_msg.header.stamp))
-            tf_msg = self.make_map_to_odom_transform(odom_msg.header.stamp)
-            self.transform_pub.publish(tf_msg)
-            self.tf_broadcaster.sendTransform(tf_msg)
+            self.publish_retained_pose(odom_msg.header.stamp)
 
 
 

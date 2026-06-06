@@ -16,6 +16,11 @@ from cv_bridge import CvBridge
 from rclpy.qos import QoSProfile , DurabilityPolicy, ReliabilityPolicy, HistoryPolicy
 
 
+MAP_BIAS_X = 1.0
+MAP_BIAS_Y = 1.0
+BOX_PADDING_PX = 15
+MAX_DETECTION_AGE_SEC = 2.0
+
 
 
 def get_distance_from_pixel(u, v,altitude):
@@ -37,7 +42,7 @@ def R_from_quat_xyzw(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
     ], dtype=float)
     return R.T
 
-def pixel_to_map_EN(u, v, RT: np.ndarray, altitude: float):
+def pixel_to_map_EN(u, v, RT: np.ndarray, altitude: float, tx: float = 0.0, ty: float = 0.0):
 
     x, y, s = get_distance_from_pixel(u, v, altitude)
 
@@ -56,16 +61,20 @@ def pixel_to_map_EN(u, v, RT: np.ndarray, altitude: float):
         r = r_flat.reshape(original_shape[0], original_shape[1], 3)
         
         # Extract x and y components
-        x_world = r[:, :, 0]
-        y_world = r[:, :, 1]
+        x_world = r[:, :, 0] + tx + MAP_BIAS_X
+        y_world = r[:, :, 1] + ty + MAP_BIAS_Y
     else:
         # Scalar case
         r0 = np.array([x, y, -s], dtype=float)
         r = RT @ r0
-        x_world = float(r[0])
-        y_world = float(r[1])
+        x_world = float(r[0] + tx + MAP_BIAS_X)
+        y_world = float(r[1] + ty + MAP_BIAS_Y)
     
     return x_world, y_world, s
+
+
+def stamp_delta_seconds(a, b) -> float:
+    return abs((float(a.sec) - float(b.sec)) + 1e-9 * (float(a.nanosec) - float(b.nanosec)))
 
 def detections_to_xyxy_and_centers(det_msg : Detection2DArray, h: int, w: int):
     if det_msg is None:
@@ -91,7 +100,7 @@ def detections_to_xyxy_and_centers(det_msg : Detection2DArray, h: int, w: int):
 
 
 
-def build_obstacle_mask(bgr_image, xyxy_boxes=None):
+def build_obstacle_mask(bgr_image, xyxy_boxes=None, box_padding_px: int = 0):
     h, w = bgr_image.shape[:2]
     image_gray = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
     laplacian = cv2.Laplacian(image_gray, cv2.CV_64F, ksize=3)
@@ -106,6 +115,10 @@ def build_obstacle_mask(bgr_image, xyxy_boxes=None):
 
     if xyxy_boxes is not None and len(xyxy_boxes) > 0:
                 for x1, y1, x2, y2 in xyxy_boxes:
+                    x1 -= box_padding_px
+                    y1 -= box_padding_px
+                    x2 += box_padding_px
+                    y2 += box_padding_px
                     # clip pour éviter les soucis de limites
                     x1 = max(0, min(int(x1), w-1)); x2 = max(0, min(int(x2), w-1))
                     y1 = max(0, min(int(y1), h-1)); y2 = max(0, min(int(y2), h-1))
@@ -140,8 +153,8 @@ def mask_to_occupancy_grid(obstacle_mask: np.ndarray, x_world: np.ndarray,y_worl
     msg.info.resolution = float(resolution)
     msg.info.width = int(width)
     msg.info.height = int(height)
-    msg.info.origin.position.x = xmin +1
-    msg.info.origin.position.y = ymin +1
+    msg.info.origin.position.x = xmin
+    msg.info.origin.position.y = ymin
     msg.info.origin.position.z = 0.0
     msg.info.origin.orientation.w = 1.0
     msg.data = grid.flatten().tolist()
@@ -173,13 +186,21 @@ class UavProjectionNode(Node):
             depth=1,
         )
 
+        mavros_qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
+
         self.last_goal = None
         
         self.bridge = CvBridge()
 
         self.altitude = None
         self.imu_q = None
+        self.uav_xy = None
         self.detections = None
+        self.last_nonempty_detections = None
         
         self.map_pub = self.create_publisher(OccupancyGrid, '/map',map_qos)
         self.mask_pub = self.create_publisher(Image, '/uav/obstacle_mask',10)
@@ -190,7 +211,7 @@ class UavProjectionNode(Node):
 
         self.image_sub =self.create_subscription(Image,'/uav/camera/image_raw', self.on_image,10)
         self.imu_sub =self.create_subscription(Imu,'/uav/imu',self.on_imu,10)
-        # self.odom_sub =self.create_subscription(Odometry,'/uav/odom',self.on_odom,10)
+        self.pose_sub = self.create_subscription(PoseStamped, '/mavros/local_position/pose', self.on_pose, mavros_qos)
         self.alt_sub =self.create_subscription(Range,'/uav/altitude',self.on_alt,10)
         self.boxes_sub =self.create_subscription(Detection2DArray,'/uav/detection_boxes',self.on_detections,10)
 
@@ -204,9 +225,38 @@ class UavProjectionNode(Node):
     def on_alt(self,msg: Range):
         self.altitude = float(msg.range)
 
+    def on_pose(self, msg: PoseStamped):
+        self.uav_xy = (
+            float(msg.pose.position.x),
+            float(msg.pose.position.y),
+        )
+
 
     def on_detections(self, msg: Detection2DArray):
         self.detections = msg
+        if len(msg.detections) > 0:
+            self.last_nonempty_detections = msg
+
+    def get_detections_for_image(self, image_stamp):
+        if self.detections is not None and len(self.detections.detections) > 0:
+            current_age = stamp_delta_seconds(image_stamp, self.detections.header.stamp)
+            if current_age > MAX_DETECTION_AGE_SEC:
+                self.get_logger().warn(
+                    f"Latest detections are old ({current_age:.2f}s), reusing them anyway.",
+                    throttle_duration_sec=5.0,
+                )
+            return self.detections
+
+        if self.last_nonempty_detections is not None:
+            last_age = stamp_delta_seconds(image_stamp, self.last_nonempty_detections.header.stamp)
+            if last_age > MAX_DETECTION_AGE_SEC:
+                self.get_logger().warn(
+                    f"Last non-empty detections are old ({last_age:.2f}s), reusing them anyway.",
+                    throttle_duration_sec=5.0,
+                )
+            return self.last_nonempty_detections
+
+        return None
 
     def on_image(self, msg: Image):
 
@@ -219,14 +269,19 @@ class UavProjectionNode(Node):
             self.get_logger().warn("No IMU yet (/uav/imu). Skipping frame.")
             return
 
+        if self.uav_xy is None:
+            self.get_logger().warn("No UAV pose yet (/mavros/local_position/pose). Skipping frame.")
+            return
+
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
         h, w = frame.shape[:2]
         
 
-        xyxy_boxes, centers_px = detections_to_xyxy_and_centers(self.detections, h, w)
+        detections_msg = self.get_detections_for_image(msg.header.stamp)
+        xyxy_boxes, centers_px = detections_to_xyxy_and_centers(detections_msg, h, w)
 
-        obstacle_mask = build_obstacle_mask(frame,xyxy_boxes=xyxy_boxes)
+        obstacle_mask = build_obstacle_mask(frame, xyxy_boxes=xyxy_boxes, box_padding_px=BOX_PADDING_PX)
 
         mask_msg = self.bridge.cv2_to_imgmsg(obstacle_mask, encoding="mono8")
         
@@ -240,17 +295,18 @@ class UavProjectionNode(Node):
 
         qx, qy, qz, qw = self.imu_q
         RT = R_from_quat_xyzw(qx, qy, qz, qw)
+        tx_uav, ty_uav = self.uav_xy
 
 
         # Convert all pixels to world coordinates
-        x_world, y_world, res = pixel_to_map_EN(u_grid, v_grid, RT,self.altitude)
+        x_world, y_world, res = pixel_to_map_EN(u_grid, v_grid, RT, self.altitude, tx_uav, ty_uav)
         resolution = float(res) 
         og = mask_to_occupancy_grid(obstacle_mask, x_world, y_world, resolution, msg.header.stamp)
         self.map_pub.publish(og)
 
         if 0 in centers_px:
             cu, cv = centers_px[0]
-            tx, ty, res = pixel_to_map_EN(cu,cv,RT,self.altitude)
+            tx, ty, res = pixel_to_map_EN(cu, cv, RT, self.altitude, tx_uav, ty_uav)
             self.last_goal = (tx, ty)
 
         if self.last_goal is not None:
