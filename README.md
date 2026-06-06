@@ -16,8 +16,8 @@ This repository implements an end-to-end cooperative autonomy loop:
 4. UGV sensor streams are normalized to `/ugv/*` topics.
 5. UGV ICP aligns LiDAR scan points with the UAV-generated occupancy map for localization refinement.
 6. Dijkstra planning computes shortest paths on the occupancy grid toward goal poses.
-7. TF connector keeps the cross-platform frame tree coherent (`world`, `map`, drone and robot frames).
-8. Bag recording and post-processing scripts support experiments and dataset generation.
+7. The planner-visible TF chain is assembled from `robot_state_publisher`, controller odometry, and the `map -> robot1/odom` correction broadcast by `ugv_icp.py`.
+8. Launch files, container tooling, and docs support repeatable simulation experiments.
 
 ## Project Idea Diagram
 
@@ -26,6 +26,20 @@ This repository implements an end-to-end cooperative autonomy loop:
 ## Architecture Diagram
 
 ![UAV-UGV Functional Architecture](docs/architecture.svg)
+
+The diagram groups the system into platform sources, bridge/perception nodes, shared state, and localization/planning consumers so the ownership of each topic and TF edge is visible at a glance.
+
+## UGV ICP Workflow
+
+![UGV ICP Workflow](docs/ugv_icp_workflow_en.png)
+
+The current `scripts/ugv_icp.py` workflow is time-consistent rather than "use the latest odom and hope it matches":
+
+1. `odom_callback` stores timestamped odom poses in `odom_buffer`.
+2. `scan_callback` queues incoming scans in `pending_scans`.
+3. A scan is processed only once two odom samples bracket `t_scan`.
+4. `ugv_icp.py` interpolates `odom -> base` at the scan timestamp, builds `map -> base_pred`, and runs point-to-plane ICP against `/map`.
+5. If the ICP solution is accepted, the node updates the retained `map -> odom` correction and republishes the corrected pose / TF.
 
 ## Repository Layout
 
@@ -39,6 +53,7 @@ This repository implements an end-to-end cooperative autonomy loop:
 - `scripts/`: runtime nodes and data tooling
 - `docs/project_idea.png`: concept figure of the UAV-UGV interception pipeline
 - `docs/architecture.svg`: high-level functional architecture image
+- `docs/ugv_icp_workflow_en.png`: English diagram of the buffered/interpolated UGV ICP pipeline
 - `Dockerfile`, `docker-compose.yml`, `entrypoint.sh`: containerized PX4 + ROS 2 environment
 
 ## Main Runtime Components
@@ -61,15 +76,17 @@ This repository implements an end-to-end cooperative autonomy loop:
 
 - `scripts/ugv_icp.py`
   - Input: `/ugv/scan`, `/ugv/odom`, `/map`
-  - Output: `/ugv/icp/pose`, `/ugv/icp/transform`
+  - Output: `/ugv/icp/pose`, `/ugv/icp/transform`, `/ugv/icp/target_normals`
+  - Role: buffered point-to-plane ICP with scan deferral, odom interpolation at `t_scan`, and retained `map -> odom` correction
 
 - `scripts/dijkstra_planner.py`
   - Input: `/map`, `/goal_pose` (+ TF lookup)
   - Output: `/dijkstra/path`, `/dijkstra/visited_map`
 
-- `scripts/connect_tf_tree.py`
-  - Input: `/mavros/local_position/pose`, `/robot1/diff_cont/odom`, `/robot2/diff_cont/odom`
-  - Output: static and dynamic TF transforms
+## TF and Goal Routing Notes
+
+- There is no standalone `connect_tf_tree.py` in the current repository tree. The planner-facing TF graph is currently built from `robot_state_publisher`, Gazebo/controller odometry, and `scripts/ugv_icp.py` broadcasting `map -> robot1/odom`.
+- `scripts/uav_projection.py` publishes candidate goals on `/uav/target_goal`, while `scripts/dijkstra_planner.py` subscribes to `/goal_pose`. A small adapter node or operator handoff is still needed to route the projected target directly into the planner.
 
 ## Prerequisites (Local, Non-Docker)
 
@@ -125,6 +142,68 @@ ros2 launch my_package launch_sim.py robot_name:=robot1
 ros2 launch my_package launch_sim.py robot_name:=robot2
 ```
 
+## Manual Launch Procedure
+
+The following sequence matches the current manual bring-up flow inside the dev container. Use separate terminals or tmux panes for the long-running processes.
+
+### 1. Start MAVROS
+
+```bash
+ros2 run mavros mavros_node --ros-args \
+  -p fcu_url:=udp://:14540@127.0.0.1:14557 \
+  -p target_system_id:=1 \
+  -p target_component_id:=1 \
+  -p fcu_protocol:=v2.0 \
+  -p use_sim_time:=true
+```
+
+### 2. Start PX4 SITL and Gazebo Classic
+
+```bash
+export LIBGL_ALWAYS_SOFTWARE=1
+export MESA_GL_VERSION_OVERRIDE=4.5
+source /usr/share/gazebo-11/setup.sh
+
+cd /root/PX4-Autopilot
+PX4_SITL_WORLD=/root/dev_ws/src/my_package/worlds/my_world make px4_sitl gazebo-classic_iris_depth_camera
+```
+
+### 3. Start the Gazebo client
+
+```bash
+gzclient --verbose
+```
+
+### 4. Spawn the UGVs and target
+
+```bash
+ros2 launch my_package launch_sim.py robot_name:=robot2
+ros2 launch my_package launch_sim.py robot_name:=robot1
+```
+
+### 5. Launch the ROS 2 runtime nodes
+
+```bash
+python3 /root/dev_ws/src/my_package/scripts/uav_sensor_bridge.py --ros-args -p use_sim_time:=true
+python3 /root/dev_ws/src/my_package/scripts/ugv_sensor_bridge.py --ros-args -p use_sim_time:=true
+python3 /root/dev_ws/src/my_package/scripts/uav_yolo_tracker.py --ros-args -p use_sim_time:=true
+python3 /root/dev_ws/src/my_package/scripts/uav_projection.py --ros-args -p use_sim_time:=true
+python3 /root/dev_ws/src/my_package/scripts/ugv_icp.py --ros-args -p use_sim_time:=true
+python3 /root/dev_ws/src/my_package/scripts/ekf_fusion.py --ros-args -p use_sim_time:=true
+```
+
+### 6. Start RViz
+
+```bash
+rviz2 --ros-args -p use_sim_time:=true
+```
+
+### 7. Move the robot
+
+```bash
+ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -r /cmd_vel:=/robot1/diff_cont/cmd_vel_unstamped
+```
+
 ## Running the Python Nodes
 
 Most scripts are plain Python ROS 2 nodes in `scripts/`.
@@ -137,5 +216,4 @@ python3 /root/dev_ws/src/my_package/scripts/uav_projection.py
 python3 /root/dev_ws/src/my_package/scripts/ugv_sensor_bridge.py
 python3 /root/dev_ws/src/my_package/scripts/ugv_icp.py
 python3 /root/dev_ws/src/my_package/scripts/dijkstra_planner.py
-python3 /root/dev_ws/src/my_package/scripts/connect_tf_tree.py
 ```

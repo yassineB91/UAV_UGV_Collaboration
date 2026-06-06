@@ -1,79 +1,134 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" role="img" aria-label="UAV UGV collaboration architecture">
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="980" viewBox="0 0 1700 980" role="img" aria-label="UAV UGV collaboration architecture">
   <defs>
     <style>
-      .title { font: 700 28px 'DejaVu Sans', Arial, sans-serif; fill: #0f172a; }
+      .title { font: 700 30px 'DejaVu Sans', Arial, sans-serif; fill: #0f172a; }
       .subtitle { font: 500 16px 'DejaVu Sans', Arial, sans-serif; fill: #334155; }
-      .section { font: 700 18px 'DejaVu Sans', Arial, sans-serif; fill: #0f172a; }
-      .label { font: 500 14px 'DejaVu Sans', Arial, sans-serif; fill: #0f172a; }
+      .layer-title { font: 700 20px 'DejaVu Sans', Arial, sans-serif; fill: #0f172a; }
+      .node-title { font: 700 16px 'DejaVu Sans', Arial, sans-serif; fill: #0f172a; }
       .small { font: 500 12px 'DejaVu Sans', Arial, sans-serif; fill: #334155; }
-      .box { stroke: #1e293b; stroke-width: 2; rx: 12; ry: 12; }
+      .caption { font: 500 11px 'DejaVu Sans', Arial, sans-serif; fill: #475569; }
+      .layer { stroke: #cbd5e1; stroke-width: 1.5; rx: 20; ry: 20; }
+      .node { stroke: #1e293b; stroke-width: 1.8; rx: 14; ry: 14; }
+      .store { stroke: #0f172a; stroke-width: 1.8; stroke-dasharray: 7 5; rx: 14; ry: 14; }
       .arrow { stroke: #0f172a; stroke-width: 2.4; fill: none; marker-end: url(#arrowhead); }
+      .dashed { stroke-dasharray: 8 6; }
     </style>
     <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
       <polygon points="0 0, 10 3.5, 0 7" fill="#0f172a" />
     </marker>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#f8fafc"/>
-      <stop offset="100%" stop-color="#eef2ff"/>
+      <stop offset="100%" stop-color="#eef4ff"/>
     </linearGradient>
   </defs>
 
-  <rect x="0" y="0" width="1280" height="760" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1700" height="980" fill="url(#bg)"/>
 
-  <text x="40" y="52" class="title">UAV-UGV Collaboration Functional Architecture</text>
-  <text x="40" y="78" class="subtitle">ROS 2 Humble + PX4 SITL + Gazebo Classic data flow</text>
+  <text x="42" y="58" class="title">UAV-UGV Collaboration Runtime Architecture</text>
+  <text x="42" y="86" class="subtitle">Layered runtime view with dedicated routing lanes for map, TF, goal, and ICP dependencies</text>
 
-  <text x="60" y="130" class="section">Simulation Layer</text>
-  <rect class="box" x="40" y="150" width="360" height="120" fill="#dbeafe"/>
-  <text x="60" y="185" class="label">PX4 SITL + MAVROS + UAV Camera/IMU/Pose</text>
-  <text x="60" y="210" class="small">/mavros/*, /iris_depth_camera/*</text>
+  <rect class="layer" x="30" y="120" width="1640" height="240" fill="#dbeafe"/>
+  <text x="52" y="154" class="layer-title">Layer 1. UAV Mapping Pipeline</text>
 
-  <rect class="box" x="40" y="300" width="360" height="120" fill="#dcfce7"/>
-  <text x="60" y="335" class="label">Gazebo UGV (robot1/robot2)</text>
-  <text x="60" y="360" class="small">/scan, /camera/image_raw, /robot1/diff_cont/odom</text>
+  <rect class="node" x="60" y="200" width="230" height="92" fill="#eff6ff"/>
+  <text x="80" y="230" class="node-title">PX4 SITL + MAVROS</text>
+  <text x="80" y="254" class="small">camera, IMU, local pose, local odom</text>
+  <text x="80" y="273" class="small">native UAV source topics</text>
 
-  <text x="470" y="130" class="section">Perception &amp; Fusion Layer</text>
-  <rect class="box" x="440" y="150" width="390" height="90" fill="#fef3c7"/>
-  <text x="460" y="182" class="label">uav_sensor_bridge.py</text>
-  <text x="460" y="205" class="small">Normalizes UAV topics to /uav/*</text>
+  <rect class="node" x="340" y="200" width="230" height="92" fill="#fff7cc"/>
+  <text x="360" y="230" class="node-title">uav_sensor_bridge.py</text>
+  <text x="360" y="254" class="small">normalizes raw UAV topics</text>
+  <text x="360" y="273" class="small">publishes /uav/*</text>
 
-  <rect class="box" x="440" y="260" width="390" height="90" fill="#fde68a"/>
-  <text x="460" y="292" class="label">uav_yolo_tracker.py</text>
-  <text x="460" y="315" class="small">YOLO tracking -> /uav/detection_boxes</text>
+  <rect class="node" x="620" y="200" width="230" height="92" fill="#fde68a"/>
+  <text x="640" y="230" class="node-title">uav_yolo_tracker.py</text>
+  <text x="640" y="254" class="small">reads /uav/camera/image_raw</text>
+  <text x="640" y="273" class="small">publishes /uav/detection_boxes</text>
 
-  <rect class="box" x="440" y="370" width="390" height="120" fill="#fef9c3"/>
-  <text x="460" y="402" class="label">uav_projection.py</text>
-  <text x="460" y="425" class="small">Image + IMU + Altitude + Detections -> /map</text>
-  <text x="460" y="447" class="small">Publishes /uav/obstacle_mask and /uav/target_goal</text>
+  <rect class="node" x="900" y="180" width="260" height="132" fill="#fef9c3"/>
+  <text x="920" y="212" class="node-title">uav_projection.py</text>
+  <text x="920" y="237" class="small">fuses image, IMU, altitude, detections,</text>
+  <text x="920" y="258" class="small">and MAVROS pose into world-space products</text>
+  <text x="920" y="279" class="small">publishes /map, /uav/obstacle_mask, /uav/target_goal</text>
 
-  <rect class="box" x="440" y="520" width="390" height="90" fill="#ecfccb"/>
-  <text x="460" y="552" class="label">ugv_sensor_bridge.py</text>
-  <text x="460" y="575" class="small">Bridges UGV sensor streams to /ugv/*</text>
+  <rect class="store" x="1280" y="180" width="320" height="70" fill="#e0f2fe"/>
+  <text x="1300" y="210" class="node-title">Goal candidate product</text>
+  <text x="1300" y="233" class="small">/uav/target_goal</text>
 
-  <text x="900" y="130" class="section">Localization &amp; Planning Layer</text>
-  <rect class="box" x="860" y="180" width="360" height="110" fill="#e0e7ff"/>
-  <text x="880" y="215" class="label">ugv_icp.py</text>
-  <text x="880" y="238" class="small">Aligns UGV LiDAR scans with /map (ICP)</text>
+  <rect class="store" x="1280" y="270" width="320" height="70" fill="#e0f2fe"/>
+  <text x="1300" y="300" class="node-title">Shared map product</text>
+  <text x="1300" y="323" class="small">/map occupancy grid</text>
 
-  <rect class="box" x="860" y="320" width="360" height="110" fill="#ddd6fe"/>
-  <text x="880" y="355" class="label">dijkstra_planner.py</text>
-  <text x="880" y="378" class="small">Computes shortest path on occupancy grid</text>
+  <rect class="layer" x="30" y="390" width="1640" height="260" fill="#dcfce7"/>
+  <text x="52" y="424" class="layer-title">Layer 2. UGV Localization Pipeline</text>
 
-  <rect class="box" x="860" y="460" width="360" height="110" fill="#e9d5ff"/>
-  <text x="880" y="495" class="label">connect_tf_tree.py</text>
-  <text x="880" y="518" class="small">Publishes static/dynamic TF links</text>
+  <rect class="node" x="60" y="480" width="230" height="92" fill="#ecfeff"/>
+  <text x="80" y="510" class="node-title">Gazebo UGV + controller</text>
+  <text x="80" y="534" class="small">raw scan, IMU, camera, diff-drive odom</text>
+  <text x="80" y="553" class="small">native ground robot source topics</text>
 
-  <text x="900" y="640" class="section">Data Ops</text>
-  <rect class="box" x="860" y="660" width="360" height="70" fill="#fecaca"/>
-  <text x="880" y="690" class="small">record_bag.sh -> postprocess_run.sh -> make_dataset.py</text>
+  <rect class="node" x="340" y="480" width="230" height="92" fill="#dcfce7"/>
+  <text x="360" y="510" class="node-title">ugv_sensor_bridge.py</text>
+  <text x="360" y="534" class="small">normalizes /scan, /imu, /camera, odom</text>
+  <text x="360" y="553" class="small">publishes /ugv/*</text>
 
-  <path class="arrow" d="M 400 210 L 440 195"/>
-  <path class="arrow" d="M 400 360 L 440 555"/>
-  <path class="arrow" d="M 635 240 L 635 260"/>
-  <path class="arrow" d="M 635 350 L 635 370"/>
-  <path class="arrow" d="M 830 430 L 860 235"/>
-  <path class="arrow" d="M 830 430 L 860 375"/>
-  <path class="arrow" d="M 830 430 L 860 515"/>
+  <rect class="store" x="620" y="480" width="230" height="92" fill="#ecfccb"/>
+  <text x="640" y="510" class="node-title">Normalized UGV topics</text>
+  <text x="640" y="534" class="small">/ugv/scan</text>
+  <text x="640" y="553" class="small">/ugv/odom</text>
 
-  <text x="40" y="736" class="small">Generated diagram for README overview</text>
+  <rect class="node" x="900" y="460" width="260" height="132" fill="#e0e7ff"/>
+  <text x="920" y="492" class="node-title">ugv_icp.py</text>
+  <text x="920" y="517" class="small">buffers scans + odom, interpolates at t_scan,</text>
+  <text x="920" y="538" class="small">runs point-to-plane ICP against /map</text>
+  <text x="920" y="559" class="small">publishes corrected pose and map -&gt; robot1/odom</text>
+
+  <rect class="store" x="1280" y="480" width="320" height="92" fill="#ede9fe"/>
+  <text x="1300" y="510" class="node-title">ICP outputs for downstream use</text>
+  <text x="1300" y="534" class="small">/ugv/icp/pose</text>
+  <text x="1300" y="553" class="small">map -&gt; robot1/odom correction</text>
+
+  <rect class="layer" x="30" y="680" width="1640" height="260" fill="#ede9fe"/>
+  <text x="52" y="714" class="layer-title">Layer 3. Planning and TF Consumers</text>
+
+  <rect class="node" x="60" y="760" width="540" height="92" fill="#f0fdf4"/>
+  <text x="80" y="790" class="node-title">TF sources already available in runtime</text>
+  <text x="80" y="814" class="small">robot_state_publisher link frames + controller odom TF</text>
+  <text x="80" y="833" class="small">combined later with the ICP map correction</text>
+
+  <rect class="store" x="960" y="730" width="260" height="90" fill="#eef2ff"/>
+  <text x="980" y="760" class="node-title">Planning TF graph</text>
+  <text x="980" y="783" class="small">robot frames + odom TF + map correction</text>
+
+  <rect class="store" x="960" y="840" width="260" height="70" fill="#fff1f2"/>
+  <text x="980" y="870" class="node-title">/goal_pose input</text>
+  <text x="980" y="893" class="small">manual goal or adapter from /uav/target_goal</text>
+
+  <rect class="node" x="1260" y="730" width="340" height="140" fill="#f5d0fe"/>
+  <text x="1280" y="762" class="node-title">dijkstra_planner.py</text>
+  <text x="1280" y="787" class="small">consumes /map, /goal_pose, and TF</text>
+  <text x="1280" y="808" class="small">publishes /dijkstra/path and /dijkstra/visited_map</text>
+
+  <path class="arrow" d="M 290 246 L 340 246"/>
+  <path class="arrow" d="M 570 246 L 620 246"/>
+  <path class="arrow" d="M 850 246 L 900 246"/>
+  <path class="arrow" d="M 1160 215 L 1280 215"/>
+  <path class="arrow" d="M 1160 305 L 1280 305"/>
+  <path class="arrow" d="M 570 256 L 590 256 L 590 330 L 1030 330 L 1030 312"/>
+
+  <path class="arrow" d="M 290 526 L 340 526"/>
+  <path class="arrow" d="M 570 526 L 620 526"/>
+  <path class="arrow" d="M 850 526 L 900 526"/>
+  <path class="arrow" d="M 1160 526 L 1280 526"/>
+  <path class="arrow" d="M 1320 340 L 1320 440 L 1030 440 L 1030 460"/>
+
+  <path class="arrow" d="M 600 806 L 960 806"/>
+  <path class="arrow" d="M 1220 775 L 1260 775"/>
+  <path class="arrow" d="M 1220 875 L 1240 875 L 1240 815 L 1260 815"/>
+
+  <path class="arrow" d="M 1440 572 L 1440 690 L 1220 690 L 1220 775"/>
+  <path class="arrow" d="M 1600 330 L 1630 330 L 1630 800 L 1600 800"/>
+  <path class="arrow dashed" d="M 1600 215 L 1650 215 L 1650 875 L 1220 875"/>
+
+  <text x="54" y="964" class="caption">Each long dependency now has its own routing corridor: map uses the far-right lane, ICP-to-TF uses the center-right lane, and goal propagation uses the outer dashed lane.</text>
 </svg>
