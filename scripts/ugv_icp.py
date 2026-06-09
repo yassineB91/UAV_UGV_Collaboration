@@ -105,9 +105,11 @@ class ICPNode(Node):
         msg.pose.pose.orientation.w = cos(theta / 2.0)
 
         msg.pose.covariance = [0.0] * 36
-        msg.pose.covariance[14] = 1e6
-        msg.pose.covariance[21] = 1e6
-        msg.pose.covariance[28] = 1e6
+        # This ICP estimate is planar, so keep z/roll/pitch nearly locked
+        # instead of publishing huge dummy variances that make RViz explode.
+        msg.pose.covariance[14] = 1e-6
+        msg.pose.covariance[21] = 1e-6
+        msg.pose.covariance[28] = 1e-6
 
         if self.retained_covariance is not None:
             cov = self.retained_covariance
@@ -581,7 +583,13 @@ class ICPNode(Node):
             self.R_retained = R_icp
             self.t_retained = t_icp
             cov_xy = max(0.02, mean_error ** 2)
-            cov_yaw = max(np.deg2rad(5.0) ** 2, 0.5 * mean_error)
+            # Yaw covariance must stay in angular units; using the translational
+            # ICP residual here makes the variance explode in RViz.
+            cov_yaw = float(np.clip(
+                yaw_jump ** 2,
+                np.deg2rad(2.0) ** 2,
+                np.deg2rad(10.0) ** 2,
+            ))
             self.retained_covariance = np.diag([cov_xy, cov_xy, cov_yaw])
         else:
             self.R_retained = R_pred

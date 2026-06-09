@@ -137,6 +137,11 @@ class EkfFusion(Node):
         S = H @ P_pred @ H.T + R
         PHt = P_pred @ H.T
         try:
+            # Kalman gain: K = P_pred @ H.T @ inv(S).
+            # We avoid forming inv(S) directly because solving the linear system
+            # gives the same result with less floating-point error.
+            # Since solve(A, B) solves A @ X = B, transpose K @ S = PHt into
+            # S.T @ K.T = PHt.T, then transpose the solved K.T back.
             K = np.linalg.solve(S.T, PHt.T).T
         except np.linalg.LinAlgError:
             self.get_logger().warn(
@@ -148,6 +153,10 @@ class EkfFusion(Node):
         I = np.eye(P_pred.shape[0])
         X_upd = X_pred + K @ innov
         X_upd[2] = self.wrap_to_pi(X_upd[2])
+        # Joseph covariance update. The compact form P - K @ S @ K.T is
+        # equivalent in exact algebra, but in floating-point math it can break
+        # covariance symmetry or create tiny negative variances. This form keeps
+        # the remaining state uncertainty and injected measurement noise explicit.
         P_upd = (I - K @ H) @ P_pred @ (I - K @ H).T + K @ R @ K.T
         return X_upd, self.symmetrize_covariance(P_upd), True
 
