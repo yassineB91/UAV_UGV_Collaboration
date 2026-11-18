@@ -1,0 +1,96 @@
+<?xml version="1.0" ?>
+<sdf version="1.5">
+  <model name="depth_camera">
+    <pose>0 0 0 0 0 0</pose>
+
+    <link name="link">
+      <inertial>
+        <pose>0.01 0.025 0.025 0 0 0</pose>
+        <mass>0.01</mass>
+        <inertia>
+          <ixx>4.15e-6</ixx>
+          <ixy>0</ixy>
+          <ixz>0</ixz>
+          <iyy>2.407e-6</iyy>
+          <iyz>0</iyz>
+          <izz>2.407e-6</izz>
+        </inertia>
+      </inertial>
+
+      <visual name="visual">
+        <pose>0 0 0 0 0 0</pose>
+        <geometry>
+          <mesh>
+            <uri>model://realsense_camera/meshes/realsense.dae</uri>
+          </mesh>
+        </geometry>
+      </visual>
+
+      <!-- RGB -->
+      <sensor name="rgb_camera" type="camera">
+        <!-- pitch = -pi/2 => regarde vers le bas (si axe de visée par défaut = +X) -->
+        <pose>0 0 0 0 1.57079632679 0</pose>
+        <always_on>true</always_on>
+        <visualize>true</visualize>
+        <update_rate>10</update_rate>
+
+        <camera name="rgb">
+          <horizontal_fov>1.5009831567</horizontal_fov>
+          <image>
+            <width>1280</width>
+            <height>720</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>  <!-- IMPORTANT: coupe ce qui est trop proche -->
+            <far>65.535</far>
+          </clip>
+        </camera>
+
+        <plugin name="rgb_camera_controller" filename="libgazebo_ros_camera.so">
+          <ros>
+            <namespace>/iris_depth_camera</namespace>
+            <remapping>~/image_raw:=rgb/image_raw</remapping>
+            <remapping>~/camera_info:=rgb/camera_info</remapping>
+          </ros>
+          <frame_name>depth_camera::link</frame_name>
+        </plugin>
+      </sensor>
+
+      <!-- Depth -->
+      <sensor name="depth_camera" type="depth">
+        <pose>0 0 0 0 -1.57079632679 0</pose>
+        <always_on>true</always_on>
+        <visualize>true</visualize>
+        <update_rate>10</update_rate>
+
+        <camera name="depth">
+          <horizontal_fov>1.5009831567</horizontal_fov>
+          <image>
+            <width>1280</width>
+            <height>720</height>
+            <format>R8G8B8</format>
+          </image>
+          <clip>
+            <near>0.05</near>
+            <far>65.535</far>
+          </clip>
+        </camera>
+
+        <plugin name="depth_camera_controller" filename="libgazebo_ros_camera.so">
+          <ros>
+            <namespace>/iris_depth_camera</namespace>
+            <remapping>~/image_raw:=depth/image_raw</remapping>
+            <remapping>~/camera_info:=depth/camera_info</remapping>
+            <remapping>~/points:=depth/points</remapping>
+          </ros>
+
+          <frame_name>depth_camera::link</frame_name>
+          <pointCloudCutoff>0.2</pointCloudCutoff>
+          <pointCloudCutoffMax>65.535</pointCloudCutoffMax>
+        </plugin>
+      </sensor>
+
+    </link>
+  </model>
+</sdf>

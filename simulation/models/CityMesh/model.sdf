@@ -1,0 +1,31 @@
+<?xml version="1.0" ?>
+<sdf version="1.9">
+  <model name="CityMesh">
+    <static>true</static>
+
+    <!-- If the mesh looks too large/small, fix scale in Blender and re-export.
+         (SDF mesh scale exists, but different engines/tools can be finicky.) -->
+
+    <link name="link">
+      <visual name="visual">
+        <geometry>
+          <mesh>
+            <uri>model://CityMesh/meshes/city_pack_5.glb</uri>
+          </mesh>
+        </geometry>
+      </visual>
+
+      <!-- Recommended: use a simplified collision mesh instead of the full city GLB.
+           Keeping collision out entirely is fine if you just want visuals. -->
+      <!--
+      <collision name="collision">
+        <geometry>
+          <mesh>
+            <uri>model://CityMesh/meshes/city_pack_5_collision.glb</uri>
+          </mesh>
+        </geometry>
+      </collision>
+      -->
+    </link>
+  </model>
+</sdf>
