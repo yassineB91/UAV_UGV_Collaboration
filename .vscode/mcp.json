@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "datamate": {
+      "type": "stdio",
+      "command": "/home/yassine/.vscode-server/bin/69047191fc427f2f92828279aae1d90d8eeda7ab/node",
+      "args": [
+        "/home/yassine/.vscode-server/extensions/altimateai.vscode-altimate-mcp-server-0.16.0-linux-x64/dist/datamate-cli.js",
+        "start-stdio"
+      ],
+      "env": {
+        "ALTIMATE_EXTENSION_RPC": "/tmp/altimate-mcp-590.sock",
+        "ELECTRON_RUN_AS_NODE": "1"
+      },
+      "updatedAt": "2026-11-18T08:10:42.721Z"
+    }
+  }
+}

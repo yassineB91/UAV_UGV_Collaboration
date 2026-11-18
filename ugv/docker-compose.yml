@@ -1,0 +1,20 @@
+version: "3.8"
+
+services:
+  zenoh:
+    image: eclipse/zenoh-bridge-ros2dds:1.10.1
+
+    network_mode: host
+
+    environment:
+      ROS_LOCALHOST_ONLY: "0"
+      RUST_LOG: info
+
+    volumes:
+      - ./zenoh.json5:/etc/zenoh/zenoh.json5:ro
+
+    command:
+      - "-c"
+      - "/etc/zenoh/zenoh.json5"
+
+    restart: unless-stopped

@@ -1,0 +1,137 @@
+version: "2.4"
+
+services:
+  ros-config:
+    image: datasins/ros2_base:arm64
+    platform: linux/arm64
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -eu
+
+        distro="$${ROS_DISTRO:-}"
+
+        if [ -z "$$distro" ]; then
+          for setup in /opt/ros/*/setup.bash; do
+            if [ -f "$$setup" ]; then
+              distro="$$(basename "$$(dirname "$$setup")")"
+              break
+            fi
+          done
+        fi
+
+        if [ -z "$$distro" ]; then
+          echo "Impossible de détecter la distribution ROS" >&2
+          exit 1
+        fi
+
+        printf '%s\n' "$$distro" > /shared/ros-distro.tmp
+        mv /shared/ros-distro.tmp /shared/ros-distro
+        echo "Distribution ROS détectée : $$distro"
+    volumes:
+      - ros-config:/shared
+    restart: "no"
+
+  zenoh-bridge-ros2:
+    image: eclipse/zenoh-bridge-ros2dds:1.5.1
+    network_mode: host
+    depends_on:
+      - ros-config
+    environment:
+      RUST_LOG: info
+      ROS_DOMAIN_ID: "43"
+    volumes:
+      - ros-config:/shared:ro
+    entrypoint: ["/bin/ash", "-c"]
+    command:
+      - |
+        set -e
+
+        while [ ! -s /shared/ros-distro ]; do
+          echo "En attente de la configuration ROS..."
+          sleep 2
+        done
+
+        export ROS_DISTRO="$$(cat /shared/ros-distro)"
+
+        exec /zenoh-bridge-ros2dds peer \
+          -l tcp/0.0.0.0:7447 \
+          -e tcp/${RASPBERRY_IP:-192.168.8.126}:7447 \
+          -e tcp/${PC_IP:-192.168.8.160}:7447
+    restart: unless-stopped
+
+  camera:
+    image: nvcr.io/nvidia/l4t-base:r32.7.1
+    platform: linux/arm64
+    runtime: nvidia
+    network_mode: host
+    devices:
+      - /dev/video0:/dev/video0
+    volumes:
+      - /tmp/argus_socket:/tmp/argus_socket
+      - camera-frames:/camera-feed
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -e
+
+        if ! command -v gst-launch-1.0 >/dev/null ||
+           ! gst-inspect-1.0 multifilesink >/dev/null 2>&1; then
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            gstreamer1.0-tools \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good
+        fi
+
+        rm -f /camera-feed/frame-*.jpg
+
+        exec gst-launch-1.0 -e \
+          nvarguscamerasrc sensor-id=0 exposurecompensation=0.5 \
+          ! 'video/x-raw(memory:NVMM),width=1280,height=720,format=NV12,framerate=30/1' \
+          ! nvvidconv \
+          ! 'video/x-raw,format=I420' \
+          ! videorate drop-only=true \
+          ! 'video/x-raw,framerate=5/1' \
+          ! jpegenc quality=85 \
+          ! multifilesink location=/camera-feed/frame-%09d.jpg max-files=5 sync=false
+    restart: unless-stopped
+
+  ros2:
+    image: datasins/ros2_base:arm64
+    platform: linux/arm64
+    network_mode: host
+    depends_on:
+      - zenoh-bridge-ros2
+      - camera
+    environment:
+      ROS_DOMAIN_ID: "43"
+      RMW_IMPLEMENTATION: rmw_cyclonedds_cpp
+    devices:
+      - /dev/i2c-1:/dev/i2c-1
+    volumes:
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./urdf:/root/dev_ws/src/uav/urdf
+      - ./launch:/root/dev_ws/src/uav/launch
+      - ./worlds:/root/dev_ws/src/uav/worlds
+      - ./config:/root/dev_ws/src/uav/config
+      - ./models:/root/dev_ws/src/uav/models
+      - ./scripts:/root/dev_ws/src/uav/scripts
+      - ./CMakeLists.txt:/root/dev_ws/src/uav/CMakeLists.txt
+      - ./scripts/subscriber.py:/app/subscriber.py:ro
+      - camera-frames:/camera-feed:ro
+    working_dir: /root/dev_ws
+    entrypoint: ["/bin/bash", "/entrypoint.sh"]
+    command: ["bash"]
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+
+volumes:
+  ros-config:
+  camera-frames:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=16m,mode=0755"

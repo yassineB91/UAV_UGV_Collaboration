@@ -58,8 +58,9 @@ The current `scripts/ugv_icp.py` workflow is time-consistent rather than "use th
 
 ## Main Runtime Components
 
-- `scripts/uav_sensor_bridge.py`
-  - Input: `/iris_depth_camera/rgb_camera/image_raw`, `/mavros/imu/data`, `/mavros/local_position/odom`, `/mavros/local_position/pose`
+- `simulation/scripts/uav_sensor_bridge.py`
+  - Simulation input (default): `/iris_depth_camera/rgb_camera/image_raw`, `/mavros/imu/data`, `/mavros/local_position/odom`, `/mavros/local_position/pose`
+  - Real input: `/real_uav/camera/image_raw`, `/real_uav/imu`, `/real_uav/odom`, `/real_uav/pose`
   - Output: `/uav/camera/image_raw`, `/uav/imu`, `/uav/odom`, `/uav/altitude`
 
 - `scripts/uav_yolo_tracker.py`
@@ -82,6 +83,31 @@ The current `scripts/ugv_icp.py` workflow is time-consistent rather than "use th
 - `scripts/dijkstra_planner.py`
   - Input: `/map`, `/goal_pose` (+ TF lookup)
   - Output: `/dijkstra/path`, `/dijkstra/visited_map`
+
+## UAV Sensor Bridge Modes
+
+Select the input source at startup with the `mode` ROS parameter (`simulation` or `real`).
+From the repository root:
+
+```bash
+python3 simulation/scripts/uav_sensor_bridge.py --ros-args -p mode:=simulation -p use_sim_time:=true
+python3 simulation/scripts/uav_sensor_bridge.py --ros-args -p mode:=real -p use_sim_time:=false
+```
+
+The default mode is `simulation`, so existing launch commands keep using the simulation inputs.
+`use_sim_time` controls the ROS clock independently of the topic mode.
+
+Configure the real UAV publishers (or their remappings) to use these input topics:
+
+| Input | Real topic | Message type |
+| --- | --- | --- |
+| Camera | `/real_uav/camera/image_raw` | `sensor_msgs/msg/Image` |
+| IMU | `/real_uav/imu` | `sensor_msgs/msg/Imu` |
+| Odometry | `/real_uav/odom` | `nav_msgs/msg/Odometry` |
+| Pose | `/real_uav/pose` | `geometry_msgs/msg/PoseStamped` |
+
+Both modes publish the same `/uav/*` outputs. Altitude is derived from the selected pose's `position.z`.
+Restart the bridge to switch modes.
 
 ## TF and Goal Routing Notes
 

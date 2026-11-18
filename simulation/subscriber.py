@@ -1,4 +1,4 @@
-"""Send PC/status over Zenoh and log other text messages."""
+"""Publish PC status and log incoming Zenoh messages."""
 
 import json
 import logging
@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 ROS_TELEMETRY_KEYS = {"real_uav/imu", "real_uav/odom"}
+CAMERA_KEY = "real_uav/camera/image_raw/compressed"
 
 
 def start_zenoh():
@@ -35,8 +36,17 @@ def start_zenoh():
 
 def listener(sample):
     key = str(sample.key_expr).lstrip("/")
+
     if key in ROS_TELEMETRY_KEYS:
-        return  # The ROS 2 bridge handles these messages.
+        return
+
+    if key == CAMERA_KEY:
+        logger.info(
+            "Caméra reçue sur '%s' : %d octets",
+            key,
+            len(sample.payload.to_bytes()),
+        )
+        return
 
     try:
         payload = sample.payload.to_string()
